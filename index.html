@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Тренер</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main id="screen"></main>
+
+<nav class="tabs">
+  <button data-tab="today" class="on">Сегодня</button>
+  <button data-tab="plan">План</button>
+  <button data-tab="food">Еда</button>
+  <button data-tab="progress">Прогресс</button>
+  <button data-tab="profile">Профиль</button>
+</nav>
+
+<!-- экран упражнения -->
+<section id="sheet" class="sheet" hidden></section>
+
+<!-- таймер отдыха -->
+<div id="rest" class="rest" hidden>
+  <div class="rest-label">Отдых</div>
+  <div class="rest-time" id="restTime">60</div>
+  <div class="rest-btns">
+    <button id="restPlus">+15 с</button>
+    <button id="restSkip">Дальше</button>
+  </div>
+</div>
+
+<!-- камера -->
+<section id="cam" class="cam" hidden>
+  <video id="camVideo" playsinline muted></video>
+  <canvas id="camCanvas"></canvas>
+  <div class="cam-top">
+    <div class="cam-count" id="camCount">0</div>
+    <div class="cam-mode" id="camMode"></div>
+  </div>
+  <div class="cam-hint" id="camHint">Загружаю нейросеть…</div>
+  <div class="cam-btns">
+    <button id="camFlip">Камера</button>
+    <button id="camVoice">Голос: вкл</button>
+    <button id="camSave">Записать</button>
+    <button id="camClose">Закрыть</button>
+  </div>
+</section>
+
+<!-- сканер штрихкода -->
+<section id="scan" class="scan" hidden>
+  <div id="scanView"></div>
+  <p id="scanMsg"></p>
+  <button class="btn" id="scanClose">Закрыть</button>
+</section>
+
+<div id="toast" class="toast" hidden></div>
+
+<script src="data.js"></script>
+<script src="figure.js"></script>
+<script src="food.js"></script>
+<script src="app.js"></script>
+<script type="module" src="pose.js"></script>
+</body>
+</html>

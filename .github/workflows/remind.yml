@@ -1,0 +1,31 @@
+# Напоминание о тренировке: пн / ср / пт в 14:30 по Москве (11:30 UTC).
+# Бот пишет всем из списка и даёт кнопку «Открыть тренировку».
+# Секреты (Settings → Secrets and variables → Actions):
+#   BOT_TOKEN — токен бота от @BotFather;
+#   CHAT_ID  — один или несколько chat_id через запятую: 123456789,987654321
+name: remind
+
+on:
+  schedule:
+    - cron: '30 11 * * 1,3,5'
+  workflow_dispatch: {}   # кнопка «Run workflow» — проверить вручную
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Отправить напоминание
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          APP_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+        run: |
+          TEXT="Время тренировки! Открой приложение — там план на сегодня, вес и таймер. Плохой день — хотя бы разминка и одно упражнение."
+          fail=0
+          for id in $(echo "$CHAT_ID" | tr ',' ' '); do
+            jq -n --arg c "$id" --arg t "$TEXT" --arg u "$APP_URL" \
+              '{chat_id:$c, text:$t, reply_markup:{inline_keyboard:[[{text:"Открыть тренировку", web_app:{url:$u}}]]}}' \
+              | curl -sS -X POST "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" -H 'Content-Type: application/json' -d @- \
+              | grep -q '"ok":true' && echo "отправлено: $id" || { echo "ошибка для $id — человек не нажал Start в боте или неверный chat_id"; fail=1; }
+          done
+          exit $fail
