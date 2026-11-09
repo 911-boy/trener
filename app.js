@@ -417,40 +417,58 @@ function renderToday() {
   if (S.workout.wid !== w.id) { S.workout.wid = w.id; if (started) saveWorkout(); }
   const core = w.list.filter(id => LIB[id]);
   const done = core.filter(id => setsDone(id) >= setsOf(E(id))).length;
+  const nextId = core.find(id => setsDone(id) < setsOf(E(id)));
   const idx = S.program.workouts.indexOf(w) + 1, burned = Math.round(Object.entries(S.workout.sets).reduce((s, [id, v]) => s + (LIB[id] ? kcalOf(id, v.filter(x => x != null)) : 0), 0));
 
-  h += `<div class="wcard head"><b>${esc(w.name)}</b><span>Тренировка ${idx} из ${S.program.workouts.length} · ${S.workout.finished ? 'завершена' : `~${workoutMin(core)} мин · ≈ ${workoutKcal(core)} ккал`}</span>
-    ${started ? `<div class="bar thin"><i style="width:${done / core.length * 100}%"></i></div><span>Сделано ${done} из ${core.length} · сожжено ≈ ${burned} ккал${S.workout.start && !S.workout.finished ? ` · идёт <span id="clock">${mins(S.workout.start)}</span>` : ''}</span>` : ''}
-    ${S.workout.finished ? '' : `<button class="link" id="choose">${planned && planned.id === w.id ? 'Сделать другую тренировку' : 'Выбрать другую'}</button>`}</div>`;
+  h += `<div class="hero">
+    <span class="hero-k">Тренировка ${idx} из ${S.program.workouts.length}${planned && planned.id === w.id ? ' · по плану' : ''}</span>
+    <h2>${esc(w.name)}</h2>
+    <div class="hero-meta"><span>${core.length - 2} упражнений</span><span>~${workoutMin(core)} мин</span><span>≈ ${workoutKcal(core)} ккал</span></div>
+    ${started ? `<div class="bar"><i style="width:${done / core.length * 100}%"></i></div>
+      <div class="hero-sub">Сделано ${done} из ${core.length} · сожжено ≈ ${burned} ккал${S.workout.start && !S.workout.finished ? ` · <span id="clock">${mins(S.workout.start)}</span>` : ''}</div>` : ''}
+    ${S.workout.finished ? `<div class="hero-done">Тренировка завершена${S.workout.start && S.workout.end ? ` · ${Math.max(1, Math.round((S.workout.end - S.workout.start) / 60000))} мин` : ''}</div>`
+      : nextId ? `<button class="btn big" id="go">${started ? `Продолжить: ${esc(LIB[nextId].name)}` : 'Начать тренировку'}</button>`
+      : `<button class="btn big" id="toFinish">Завершить тренировку</button>`}
+  </div>`;
+  if (isDeload()) h += `<div class="tip"><b>Разгрузочная неделя.</b> На подход меньше и вес полегче — тело восстанавливается и потом растёт быстрее.</div>`;
   if (firstTime && !S.workout.finished) h += firstTips();
-  if (isDeload()) h += `<div class="banner"><b>Разгрузочная неделя.</b> На подход меньше и вес полегче — тело восстанавливается и потом растёт быстрее. Тренеры делают так раз в ~8 недель.</div>`;
-  h += core.map(id => cardHTML(id)).join('');
-  const extra = (w.extra || []).filter(id => LIB[id]);
-  if (extra.length) h += `<h3>По желанию</h3>` + (S.showExtra ? extra.map(id => cardHTML(id)).join('') : `<button class="btn ghost" id="opt">Показать ещё ${extra.length}</button>`);
 
-  if (!S.workout.finished) {
-    if (started) h += `<h3>Закончить</h3><p class="muted">Как далось?</p><div class="seg feel">${FEEL.map((f, i) => `<button data-feel="${i}" class="${S.workout.feel === i ? 'on' : ''}">${f}</button>`).join('')}</div>
+  h += `<h3>Упражнения</h3><div class="exlist">` + core.map((id, i) => rowHTML(id, i)).join('') + `</div>`;
+  const extra = (w.extra || []).filter(id => LIB[id]);
+  if (extra.length) h += `<details><summary>Ещё по желанию (${extra.length})</summary><div class="exlist">${extra.map((id, i) => rowHTML(id, core.length + i)).join('')}</div></details>`;
+
+  if (!S.workout.finished && started) {
+    h += `<div class="card" id="finishBox"><b>Закончить тренировку</b><p class="muted">Как далось?</p>
+      <div class="seg feel">${FEEL.map((f, i) => `<button data-feel="${i}" class="${S.workout.feel === i ? 'on' : ''}">${f}</button>`).join('')}</div>
       <textarea id="wnote" rows="2" maxlength="300" placeholder="Заметка: болело плечо, взял вес тяжелее…">${esc(S.workout.note || '')}</textarea>
-      <button class="btn" id="finish">Завершить тренировку</button>`;
-  } else {
-    h += `<div class="banner">${S.workout.start && S.workout.end ? `Длительность ${Math.max(1, Math.round((S.workout.end - S.workout.start) / 60000))} мин. ` : ''}${S.workout.feel != null ? 'Далось: ' + FEEL[S.workout.feel].toLowerCase() + '. ' : ''}${esc(S.workout.note || '')}</div>`;
+      <button class="btn" id="finish">Завершить тренировку</button></div>`;
+  } else if (S.workout.finished) {
+    if (S.workout.feel != null || S.workout.note) h += `<div class="card">${S.workout.feel != null ? 'Далось: ' + FEEL[S.workout.feel].toLowerCase() + '. ' : ''}${esc(S.workout.note || '')}</div>`;
     const fresh = newAchievements();
     if (fresh.length) h += `<div class="tip"><b>Новое достижение:</b> ${fresh.map(a => esc(a.t)).join(', ')}</div>`;
   }
-  h += `<p class="muted" style="margin-top:14px">Каждый подход сохраняется сразу и навсегда. В плохой день — хотя бы разминка и одно упражнение.</p>`;
+  if (!S.workout.finished) h += `<button class="btn ghost" id="choose">Сделать другую тренировку</button>`;
   $('#screen').innerHTML = h;
 
-  $$('.ex').forEach(b => b.onclick = () => openExercise(b.dataset.id));
+  $$('.exrow').forEach(b => b.onclick = () => openExercise(b.dataset.id));
+  const go = $('#go'); if (go) go.onclick = () => openExercise(nextId);
+  const tf = $('#toFinish'); if (tf) tf.onclick = () => $('#finishBox') && $('#finishBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
   const ch = $('#choose'); if (ch) ch.onclick = () => { S.choosing = true; renderToday(); scrollTo(0, 0); };
   $$('[data-feel]').forEach(b => b.onclick = () => { S.workout.feel = +b.dataset.feel; saveWorkout(); haptic(); $$('[data-feel]').forEach(x => x.classList.toggle('on', x === b)); });
   const note = $('#wnote'); if (note) note.onchange = () => { S.workout.note = note.value.trim().slice(0, 300); saveWorkout(); };
-  const o = $('#opt'); if (o) o.onclick = () => { S.showExtra = true; renderToday(); };
   const f = $('#finish'); if (f) f.onclick = () => {
     if (note) S.workout.note = note.value.trim().slice(0, 300);
-    S.workout.finished = true; S.workout.end = Date.now(); S.workout.name = w.name; saveWorkout(); notify(); renderToday();
+    S.workout.finished = true; S.workout.end = Date.now(); S.workout.name = w.name; saveWorkout(); notify(); renderToday(); scrollTo(0, 0);
   };
   clearInterval(clockIv);
   if (S.workout.start && !S.workout.finished) clockIv = setInterval(() => { const c = $('#clock'); if (c) c.textContent = mins(S.workout.start); else clearInterval(clockIv); }, 15000);
+}
+function rowHTML(id, i) {
+  const e = E(id), n = setsDone(id), ok = n >= setsOf(e);
+  return `<button class="exrow ${ok ? 'done' : n ? 'part' : ''}" data-id="${id}">
+    <span class="num">${ok ? '✓' : i + 1}</span>
+    <span class="n"><b>${esc(e.name)}</b><small>${setsOf(e) > 1 ? setsOf(e) + ' × ' : ''}${range(e)}${e.type === 'reps' ? ' повт.' : ''}${n && !ok ? ` · сделано ${n}` : ''}</small></span>
+    <span class="chev">›</span></button>`;
 }
 function firstTips() {
   const gym = S.profile.place === 'gym';
@@ -481,6 +499,17 @@ function nextTraining() {
 
 /* ---------- экран упражнения ---------- */
 let swTimer = null, sheetClose = null;
+// Экран упражнения на телефоне: один активный подход с крупными кнопками − / +, внизу одна главная кнопка.
+function curWorkout() { return W(S.workout.wid) || plannedFor(new Date()) || null; }
+function startKg(e) {
+  const f = S.profile.sex === 'f';
+  if (e.id === 'gravitron') return Math.round(curWeight() / 2 / 5) * 5;
+  if (e.eq.includes('bb')) return f ? 15 : 20;
+  if (e.eq.includes('kb')) return f ? 8 : 12;
+  if (e.eq.includes('gym')) return f ? 10 : 15;
+  if (['biceps', 'triceps', 'delts', 'grip'].includes(e.pat)) return f ? 2 : 5;
+  return f ? 4 : 8;
+}
 function openExercise(id) {
   const e = E(id); const ns = setsOf(e);
   const vals = S.workout.sets[id] || (S.workout.sets[id] = Array(ns).fill(null));
@@ -490,89 +519,112 @@ function openExercise(id) {
   const easier = ladderStep(id, -1), harder = ladderStep(id, 1);
   const adj = S.program.adj && S.program.adj[id];
   const service = ['warmup', 'stretch'].includes(id);
-
-  let h = `<div class="head"><button class="back" id="back">←</button><h2>${esc(e.name)}</h2></div>
-    <div class="figbox" id="fig"></div>
-    <p class="muted">${ns > 1 ? ns + ' подхода · ' : ''}${range(e)}${e.side ? ' на сторону' : ''}${e.rest ? ' · отдых ' + e.rest + ' с' : ''} · ≈ ${Math.round(kcalOf(id))} ккал</p>
-    <ol class="steps">${e.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
-    <div class="exbtns"><button class="btn ghost sm2" id="vid">Видео техники</button>${e.cam ? '<button class="btn ghost sm2" id="camBtn">Проверить камерой</button>' : ''}</div>`;
   const wtd = isWeighted(e), kgs = wtd ? (S.workout.kg = S.workout.kg || {}, S.workout.kg[id] || (S.workout.kg[id] = Array(ns).fill(null))) : null;
   const inc = wtd ? kgStep(e) : 0;
   const lastKg = last && last.kg ? Math.max(...last.kg) : null;
   const nextKg = lastKg != null ? (allTop ? lastKg + inc : lastKg) : null;
-  if (!service) h += `<p class="muted small">Как понять, что вес/нагрузка правильные: последние 1–3 повтора идут тяжело, но ты мог бы сделать ещё 1–3 с хорошей техникой. До отказа не нужно.${levelOf(S.profile) === 1 ? ' Первые 2 недели — учим технику, вес лёгкий.' : ''}</p>`;
-  if (wtd && !last) h += `<div class="tip"><b>Какой вес взять первый раз?</b> ${startHint(e)} Сделал ${e.hi} легко — в следующем подходе возьми тяжелее, не смог ${e.lo} — легче. Приложение запомнит.</div>`;
-  if (wtd && WARMUP_PATS.includes(e.pat) && e.eq.some(x => ['bb', 'gym'].includes(x))) h += `<p class="muted small">Перед первым рабочим подходом — разминочный: половина веса × 10 повторов (не записывай).</p>`;
+  const w = curWorkout(), order = w ? w.list.filter(x => LIB[x]) : [id], pos = order.indexOf(id);
+  const nextEx = pos >= 0 ? order.slice(pos + 1).find(x => doneVals(S.workout, x).length < setsOf(E(x))) : null;
+  const cur = vals.findIndex(v => v == null);
+  const repsDef = e.type === 'time' ? e.lo : (last && last.vals[cur] != null && !allTop ? Math.min(e.hi, last.vals[cur] + 1) : e.lo);
+  const kgDef = wtd ? (kgs.slice(0, Math.max(0, cur)).filter(x => x != null).pop() ?? nextKg ?? startKg(e)) : 0;
+
+  let h = `<div class="exhead"><button class="back" id="back" aria-label="Назад">←</button>
+      <div><small>${pos >= 0 ? `Упражнение ${pos + 1} из ${order.length}` : 'Упражнение'}</small><h2>${esc(e.name)}</h2></div></div>
+    <div class="figbox" id="fig"></div>
+    <div class="meta">${ns > 1 ? `<span>${ns} подхода</span>` : ''}<span>${range(e)}${e.type === 'reps' ? ' повторов' : ''}${e.side ? ' на сторону' : ''}</span>${e.rest ? `<span>отдых ${e.rest} с</span>` : ''}<span>≈ ${Math.round(kcalOf(id))} ккал</span></div>`;
+  let info = '';
   if (last) {
-    const sug = Math.min(e.hi, Math.max(...last.vals) + (e.type === 'time' ? 3 : 1));
     const lastTxt = last.kg ? `${lastKg} кг × ${last.vals.join(', ')}` : `${last.vals.join(', ')}${unit(e)}`;
-    const up = wtd ? `добавь вес: ${nextKg} кг (+${inc}).` : harder ? 'переходи на «' + LIB[harder].name + '».' : adj ? 'возвращаем обычную цель.' : (e.harder || 'делай медленнее: 3 с вниз.');
-    h += `<div class="last">В прошлый раз (${fmtDate(last.date)}): <b>${lastTxt}</b>. ${allTop ? `<br><b>Пора усложнять:</b> ${esc(up)}` : `Сегодня цель: <b>${wtd && lastKg ? lastKg + ' кг × ' : ''}${sug}${unit(e)}</b> хотя бы в одном подходе.`}</div>`;
-    if (allTop && harder && !wtd) h += `<button class="btn sm2" id="goHarder">Перейти на «${esc(LIB[harder].name)}»</button>`;
-    if (allTop && !harder && adj) h += `<button class="btn sm2" id="clearAdj">Вернуть обычную цель (${LIB[id].lo}–${LIB[id].hi})</button>`;
+    const up = wtd ? `Пора добавить вес: ${nextKg} кг.` : harder ? `Пора переходить на «${LIB[harder].name}».` : adj ? 'Пора вернуть обычную цель.' : (e.harder || 'Делай медленнее: 3 с вниз.');
+    info += `<div class="lastbox"><span>В прошлый раз · ${fmtDate(last.date)}</span><b>${lastTxt}</b>${allTop ? `<em>${esc(up)}</em>` : ''}</div>`;
+    if (allTop && harder && !wtd) info += `<button class="btn ghost" id="goHarder">Перейти на «${esc(LIB[harder].name)}»</button>`;
+    if (allTop && !harder && adj) info += `<button class="btn ghost" id="clearAdj">Вернуть цель ${LIB[id].lo}–${LIB[id].hi}</button>`;
   }
-  if (st.sessions) h += `<p class="muted small">Всего: ${st.sessions} ${plural(st.sessions, 'тренировка', 'тренировки', 'тренировок')}, ${st.total}${e.type === 'time' ? ' с' : ' повторов'}, рекорд ${st.bestKg ? st.bestKg + ' кг' : st.best + unit(e)}.</p>`;
-  h += `<h3>Подходы · цель ${range(e)}${e.type === 'reps' ? ' повторов' : ''}${e.side ? ' на сторону' : ''}</h3>` + vals.map((v, i) => {
-    const kgVal = wtd ? (kgs[i] ?? kgs.slice(0, i).filter(x => x != null).pop() ?? nextKg ?? '') : '';
-    return `<div class="set ${v != null ? 'done' : ''} ${wtd ? 'wt' : ''}" data-i="${i}">
-      <label>${i + 1}</label>
-      ${wtd ? `<input class="kg" type="text" inputmode="decimal" placeholder="кг" value="${kgVal}" aria-label="Вес, кг"><span class="x">кг ×</span>` : ''}
-      <input class="reps" type="number" inputmode="numeric" min="0" placeholder="${e.lo}" value="${v ?? ''}" aria-label="${e.type === 'time' ? 'Секунды' : 'Повторы'}">
-      ${e.type === 'time' ? '<button class="sw">Секундомер</button>' : wtd ? '' : `<span class="muted">раз</span>`}
-      <button class="ok">${v != null ? '✓' : 'Готово'}</button></div>`;
-  }).join('');
-  if (!service) h += `<button class="link" id="tooHard">Слишком тяжело?</button><div id="hardBox"></div>`;
-  h += `<button class="btn" id="exDone">← К тренировке</button>`;
+  if (wtd && !last) info += `<div class="tip"><b>Первый раз?</b> ${startHint(e)} Легко — прибавь, тяжело — убавь. Приложение запомнит вес.</div>`;
+
+  h += `<div class="logger">`;
+  if (cur >= 0) {
+    h += `<div class="lg-title">Подход ${cur + 1} <span>из ${ns}</span></div>`;
+    if (wtd) h += stepper('kg', kgDef, 'кг', 'decimal');
+    if (e.type === 'time') h += stepper('reps', repsDef, 'сек', 'numeric') + `<button class="btn ghost" id="sw">▶ Засечь время</button>`;
+    else h += stepper('reps', repsDef, e.side ? 'повт. на сторону' : 'повторов', 'numeric');
+  } else h += `<div class="lg-done">Все подходы сделаны</div>`;
+  const doneChips = vals.map((v, i) => v == null ? '' : `<button class="donechip" data-undo="${i}">✓ ${wtd && kgs[i] != null ? kgs[i] + ' × ' : ''}${v}${unit(e)}</button>`).join('');
+  if (doneChips) h += `<div class="donerow">${doneChips}</div>`;
+  h += `</div>`;
+
+  h += info;
+  h += `<details ${last ? '' : 'open'}><summary>Как делать</summary><ol class="steps">${e.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol>
+      <div class="exbtns"><button class="btn ghost" id="vid">Видео техники</button>${e.cam ? '<button class="btn ghost" id="camBtn">Камера</button>' : ''}</div></details>`;
+  if (!service) h += `<details><summary>Подсказки</summary><p class="muted">Последние 1–3 повтора должны идти тяжело, но с чистой техникой — до отказа не нужно.${levelOf(S.profile) === 1 ? ' Первые 2 недели вес лёгкий: учим технику.' : ''}</p>
+      ${wtd && WARMUP_PATS.includes(e.pat) && e.eq.some(x => ['bb', 'gym'].includes(x)) ? '<p class="muted">Перед первым подходом — разминочный: половина веса × 10 (не записывай).</p>' : ''}
+      ${st.sessions ? `<p class="muted">Всего: ${st.sessions} ${plural(st.sessions, 'тренировка', 'тренировки', 'тренировок')}, рекорд ${st.bestKg ? st.bestKg + ' кг' : st.best + unit(e)}.</p>` : ''}</details>
+      <button class="link center" id="tooHard">Слишком тяжело?</button><div id="hardBox"></div>`;
+  const primary = cur >= 0 ? `Готово · подход ${cur + 1}` : nextEx ? `Дальше: ${LIB[nextEx].name} →` : 'Закончить тренировку';
+  h += `<div class="actionbar"><button class="btn big" id="primary">${esc(primary)}</button></div>`;
 
   const sh = $('#sheet');
-  sh.innerHTML = h; sh.hidden = false; sh.scrollTop = 0;
+  const keepScroll = sh.dataset.ex === id ? sh.scrollTop : 0;
+  sh.innerHTML = h; sh.hidden = false; sh.dataset.ex = id; sh.scrollTop = keepScroll;
   if (window.Figure) Figure.mount($('#fig'), id, e.eq.includes('bb') ? 'bb' : e.eq.includes('db') ? 'db' : e.eq.includes('kb') ? 'kb' : null);
-  sheetClose = () => { stopSW(); if (window.Figure) Figure.stop(); sh.hidden = true; setBack(null); render(); };
-  $('#back').onclick = sheetClose; $('#exDone').onclick = sheetClose; setBack(sheetClose);
+  sheetClose = () => { stopSW(); if (window.Figure) Figure.stop(); sh.hidden = true; sh.dataset.ex = ''; setBack(null); render(); };
+  $('#back').onclick = sheetClose; setBack(sheetClose);
   $('#vid').onclick = () => openLink('https://www.youtube.com/results?search_query=' + encodeURIComponent(e.video));
   if (e.cam) $('#camBtn').onclick = () => openCam(id, e, vals);
+
+  // кнопки − / +
+  $$('.stepper', sh).forEach(sp => {
+    const inp = $('input', sp), k = sp.dataset.k, step = k === 'kg' ? inc : e.type === 'time' ? 5 : 1;
+    $$('button', sp).forEach(b => b.onclick = () => {
+      const v = parseFloat(String(inp.value).replace(',', '.')) || 0;
+      inp.value = Math.max(0, Math.round((v + (b.dataset.d === '+' ? step : -step)) * 100) / 100); haptic();
+    });
+  });
+  const sw = $('#sw'); if (sw) sw.onclick = () => {
+    const inp = $('.stepper[data-k="reps"] input', sh);
+    if (swTimer) { clearInterval(swTimer.iv); swTimer = null; sw.textContent = '▶ Засечь время'; sw.classList.remove('run'); haptic('medium'); return; }
+    const t0 = Date.now(); inp.value = 0; sw.textContent = '■ Стоп'; sw.classList.add('run'); haptic('medium');
+    swTimer = { iv: setInterval(() => inp.value = Math.floor((Date.now() - t0) / 1000), 250), sw: { classList: { remove() {} }, set textContent(x) {} } };
+  };
+  $$('[data-undo]', sh).forEach(b => b.onclick = () => {
+    const i = +b.dataset.undo, pv = vals[i], pk = kgs ? kgs[i] : null;
+    vals[i] = null; if (kgs) kgs[i] = null; saveWorkout(); openExercise(id);
+    toast(`Подход ${i + 1} удалён`, () => { vals[i] = pv; if (kgs) kgs[i] = pk; saveWorkout(); openExercise(id); });
+  });
+  $('#primary').onclick = () => {
+    if (cur < 0) { if (nextEx) openExercise(nextEx); else { sheetClose(); setTimeout(() => { const fb = $('#finishBox'); if (fb) fb.scrollIntoView({ behavior: 'smooth', block: 'center' }); }, 50); } return; }
+    if (swTimer) { clearInterval(swTimer.iv); swTimer = null; }
+    const rIn = $('.stepper[data-k="reps"] input', sh), kIn = $('.stepper[data-k="kg"] input', sh);
+    const v = Math.min(9999, Math.max(0, Math.round(parseFloat(String(rIn.value).replace(',', '.')) || 0)));
+    if (!v) { toast(e.type === 'time' ? 'Сколько секунд продержался?' : 'Сколько повторов сделал?'); return; }
+    vals[cur] = v;
+    if (kIn) { const kg = parseFloat(String(kIn.value).replace(',', '.')); kgs[cur] = kg >= 0 && kg < 1000 ? Math.round(kg * 4) / 4 : null; }
+    if (!S.workout.start) S.workout.start = Date.now();
+    saveWorkout(); notify();
+    if (vals.some(x => x == null)) { openExercise(id); if (e.rest) startRest(e.rest); return; }
+    const dn = vals.filter(x => x != null), mx = Math.max(...dn);
+    if (!service && mx < e.lo && mx > 0) {
+      const lo = Math.max(1, Math.round(dn.reduce((a, b) => a + b, 0) / dn.length)), hi = Math.max(lo + 2, Math.round(mx * 1.4));
+      setAdj(id, lo, hi);
+      toast(`Подстроила цель под тебя: ${lo}–${hi}${unit(e)}. Станет легче — приложение поднимет.`);
+    } else toast(nextEx ? 'Упражнение готово! Дальше — ' + LIB[nextEx].name : 'Последнее упражнение готово!');
+    openExercise(id);
+  };
   const gh = $('#goHarder'); if (gh) gh.onclick = () => { replaceEverywhere(id, harder); moveSets(id, harder); notify(); toast(`Теперь в плане: ${LIB[harder].name}`); openExercise(harder); };
   const ca = $('#clearAdj'); if (ca) ca.onclick = () => { delete S.program.adj[id]; saveProgram(); notify(); openExercise(id); };
   const th = $('#tooHard'); if (th) th.onclick = () => {
-    $('#hardBox').innerHTML = `<div class="prev"><p>Ничего страшного — так у всех в начале. ${wtd ? '<b>Сначала просто возьми вес на 10–20 % легче</b> — это нормально. ' : ''}Сделай <b>сколько можешь</b> и запиши: если не дотянешь до цели, я сама подстрою план.</p>
-      ${easier ? `<button class="btn sm2" id="goEasier">Заменить на «${esc(LIB[easier].name)}» (легче)</button>` : ''}
-      <button class="btn ghost sm2" id="lower">Снизить цель до ${Math.max(1, Math.round(e.lo * 0.5))}–${Math.max(Math.round(e.lo * 0.5) + 2, Math.round(e.hi * 0.6))}</button></div>`;
+    const lo2 = Math.max(1, Math.round(e.lo * 0.5)), hi2 = Math.max(lo2 + 2, Math.round(e.hi * 0.6));
+    $('#hardBox').innerHTML = `<div class="card"><p>Ничего страшного — так у всех в начале. ${wtd ? '<b>Сначала просто возьми вес на 10–20 % легче.</b> ' : ''}Сделай сколько можешь и запиши — я подстрою план.</p>
+      ${easier ? `<button class="btn" id="goEasier">Заменить на «${esc(LIB[easier].name)}»</button>` : ''}
+      <button class="btn ghost" id="lower">Снизить цель до ${lo2}–${hi2}</button></div>`;
     const ge = $('#goEasier'); if (ge) ge.onclick = () => { replaceEverywhere(id, easier); moveSets(id, easier); notify(); toast(`Заменила на «${LIB[easier].name}» во всём плане`); openExercise(easier); };
-    $('#lower').onclick = () => { setAdj(id, Math.max(1, Math.round(e.lo * 0.5)), Math.max(Math.round(e.lo * 0.5) + 2, Math.round(e.hi * 0.6))); notify(); toast('Цель снижена. Окрепнешь — приложение предложит вернуть.'); openExercise(id); };
+    $('#lower').onclick = () => { setAdj(id, lo2, hi2); notify(); toast('Цель снижена. Окрепнешь — приложение предложит вернуть.'); openExercise(id); };
+    $('#hardBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
   };
-  $$('.set', sh).forEach(row => {
-    const i = +row.dataset.i, inp = $('input.reps', row), kgIn = $('input.kg', row);
-    $('.ok', row).onclick = () => {
-      if (vals[i] != null) { vals[i] = null; row.classList.remove('done'); $('.ok', row).textContent = 'Готово'; saveWorkout(); return; }
-      stopSW();
-      const v = inp.value === '' ? e.lo : Math.min(9999, Math.max(0, Math.round(+inp.value)));
-      inp.value = v; vals[i] = v; row.classList.add('done'); $('.ok', row).textContent = '✓';
-      if (kgIn) {
-        const kg = parseFloat(String(kgIn.value).replace(',', '.'));
-        kgs[i] = kg >= 0 && kg < 1000 ? Math.round(kg * 4) / 4 : null;
-        // следующий подход — тот же вес по умолчанию
-        const nx = $(`.set[data-i="${i + 1}"] input.kg`, sh); if (nx && !nx.value && kgs[i] != null) nx.value = kgs[i];
-      }
-      if (!S.workout.start) S.workout.start = Date.now();
-      saveWorkout(); notify();
-      if (vals.some(x => x == null)) { if (e.rest) startRest(e.rest); return; }
-      // все подходы записаны: не дотянул до цели — подстраиваем план под человека
-      const done = vals.filter(x => x != null), mx = Math.max(...done);
-      if (!['warmup', 'stretch'].includes(id) && mx < e.lo && mx > 0) {
-        const lo = Math.max(1, Math.round(done.reduce((a, b) => a + b, 0) / done.length)), hi = Math.max(lo + 2, Math.round(mx * 1.4));
-        setAdj(id, lo, hi);
-        toast(`Подстроила цель под тебя: ${lo}–${hi}${unit(e)}. Будет легче — приложение поднимет.`);
-      }
-    };
-    const sw = $('.sw', row);
-    if (sw) sw.onclick = () => {
-      if (sw.classList.contains('run')) { stopSW(); return; }
-      stopSW();
-      const t0 = Date.now(); sw.classList.add('run'); sw.textContent = 'Стоп'; inp.value = 0; haptic('medium');
-      swTimer = { iv: setInterval(() => inp.value = Math.floor((Date.now() - t0) / 1000), 250), sw };
-    };
-  });
 }
+const stepper = (k, v, label, mode) => `<div class="stepper" data-k="${k}"><button data-d="-" aria-label="Меньше">−</button>
+  <label><input type="text" inputmode="${mode}" value="${v}"><span>${label}</span></label><button data-d="+" aria-label="Больше">+</button></div>`;
 const WARMUP_PATS = ['squat', 'hinge', 'push_h', 'push_v', 'pull_v', 'pull_h'];
 const isWeighted = e => !['warmup', 'stretch'].includes(e.pat) && e.type === 'reps' && e.eq.some(x => ['db', 'bb', 'kb', 'gym'].includes(x));
 const kgStep = e => e.eq.includes('bb') ? 2.5 : e.eq.includes('kb') ? 4 : e.eq.includes('gym') ? 5 : 1;
@@ -754,82 +806,98 @@ function parseFood(text) {
 const MEALS = ['Завтрак', 'Обед', 'Ужин', 'Перекус'];
 const mealNow = () => { const h = new Date().getHours(); return h >= 5 && h < 11 ? 0 : h >= 11 && h < 16 ? 1 : h >= 17 && h < 22 ? 2 : 3; };
 
+// «На завтрак 4 яйца, на обед гречка с курицей» — раскладываем по приёмам пищи.
+const MEAL_WORDS = { 'завтрак': 0, 'обед': 1, 'ужин': 2, 'перекус': 3, 'полдник': 3 };
+function parseFoodMeals(text) {
+  const t = ' ' + text.toLowerCase().replace(/ё/g, 'е') + ' ';
+  const re = /(?:на\s+)?(?:по)?(завтрак|обед|ужин|перекус|полдник)[а-я]*/g;
+  const marks = []; let m;
+  while ((m = re.exec(t))) marks.push({ at: m.index, end: m.index + m[0].length, meal: MEAL_WORDS[m[1]] });
+  if (!marks.length) return parseFood(text);
+  const items = [], unknown = [];
+  const take = (chunk, meal) => { if (!chunk.trim()) return; const r = parseFood(chunk); r.items.forEach(x => { if (meal != null) x.m = meal; }); items.push(...r.items); unknown.push(...r.unknown); };
+  take(t.slice(0, marks[0].at), null);
+  marks.forEach((x, i) => take(t.slice(x.end, i + 1 < marks.length ? marks[i + 1].at : t.length), x.meal));
+  return { items, unknown };
+}
+
 function renderFood() {
   const G = norms(), it = S.food.items;
   const sum = key => Math.round(it.reduce((s, x) => s + (+x[key] || 0), 0));
   const k = sum('k'), p = sum('p'), fsum = sum('f'), csum = sum('c');
   const pct = (v, g) => Math.min(100, v / g * 100);
-  const hour = new Date().getHours();
   const cup = S.profile.cup || 250, wml = S.food.waterMl ?? (S.food.water || 0) * 250;
-  const cups = Math.ceil(G.waterMl / cup), wg = Math.min(12, cups), drunk = Math.round(wml / cup * 10) / 10;
-  const rec = lsGet('recent') || [], meal = S.meal ?? mealNow();
+  const rec = lsGet('recent') || [];
+  const left = G.kcal - k, pLeft = G.protein - p;
 
   let h = `<h1>Еда</h1>
-    <div class="kcal"><div class="row"><span class="big">${k}</span><span class="muted">из ${G.kcal} ккал</span></div>
+    <div class="card sum"><div class="row"><div><span class="big">${k}</span><span class="muted"> / ${G.kcal} ккал</span></div><span class="muted">${left > 0 ? 'осталось ' + left : 'норма есть'}</span></div>
     <div class="bar ${k > G.kcal * 1.1 && S.profile.goal === 'lose' ? 'over' : ''}"><i style="width:${pct(k, G.kcal)}%"></i></div>
-    <div class="macros">${[['Белки', p, G.protein, 'p'], ['Жиры', fsum, G.fat, ''], ['Углеводы', csum, G.carbs, '']].map(([n, v, g, cl]) =>
-      `<div><span>${n}</span><b>${v}<small>/${g} г</small></b><div class="bar thin ${cl}"><i style="width:${pct(v, g)}%"></i></div></div>`).join('')}</div></div>`;
-  if (hour >= 17 && p < G.protein * 0.6) h += `<div class="tip">Белка пока мало: творог 200 г (+34 г) или 3 яйца (+18 г).</div>`;
-  else if (S.profile.goal === 'lose' && k > G.kcal * 1.1) h += `<div class="tip">Сегодня больше нормы. Ничего страшного — завтра по плану.</div>`;
+    <div class="macros">${[['Белки', p, G.protein, 'p'], ['Жиры', fsum, G.fat, 'f'], ['Углеводы', csum, G.carbs, 'c']].map(([n, v, g, cl]) =>
+      `<div><span>${n}</span><b>${v}<small> / ${g} г</small></b><div class="bar thin ${cl}"><i style="width:${pct(v, g)}%"></i></div></div>`).join('')}</div></div>`;
 
-  h += `<div class="voicebox"><textarea id="ftext" rows="1" placeholder="Что съел? «4 яйца, 2 сосиски, чай с сахаром»"></textarea>
-    <button class="icon" id="fmic" aria-label="Сказать голосом"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
-    <button class="icon" id="fscan" aria-label="Сканировать штрихкод"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7V5h3M17 5h3v2M20 17v2h-3M7 19H4v-2M8 9v6M11 9v6M14 9v6M17 9v6"/></svg></button></div>
-    <p class="muted small" id="fmicHint"></p>
-    <div class="row gap"><div class="seg sm">${MEALS.map((m, i) => `<button data-meal="${i}" class="${i === meal ? 'on' : ''}">${m}</button>`).join('')}</div><button class="btn sm" id="fcalc">Посчитать</button></div>
-    <div id="fprev"></div>`;
-  const quick = rec.length ? rec.map((r, i) => `<button data-rec="${i}">${esc(r.n)}</button>`) : FOODS.map((f, i) => `<button data-i="${i}">${esc(f.n)}</button>`);
-  h += `<div class="chiprow">${quick.join('')}</div>`;
+  h += `<div class="card inputcard"><textarea id="ftext" rows="2" placeholder="Что съел? Скажи или напиши: «на завтрак 4 яйца и чай, на обед гречка с курицей»"></textarea>
+    <div class="inrow"><button class="icon big" id="fmic" aria-label="Сказать голосом"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+    <button class="icon big" id="fscan" aria-label="Сканировать штрихкод"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7V5h3M17 5h3v2M20 17v2h-3M7 19H4v-2M8 9v6M11 9v6M14 9v6M17 9v6"/></svg></button>
+    <button class="btn" id="fcalc">Посчитать</button></div>
+    <p class="muted small" id="fmicHint">${S.meal != null ? `Добавится в «${MEALS[S.meal]}»` : 'Скажи «на завтрак / обед / ужин / перекус» — разложу сама'}</p>
+    <div id="fprev"></div>
+    ${rec.length ? `<div class="chiprow">${rec.slice(0, 4).map((r, i) => `<button data-rec="${i}">+ ${esc(r.n)}</button>`).join('')}</div>` : ''}</div>`;
 
-  const cupName = cup >= 500 ? 'бутылка' : 'стакан';
-  h += `<div class="waterrow"><span>Вода</span><div class="water">${Array.from({ length: wg }, (_, i) => `<button data-w="${i + 1}" class="${i + 1 <= drunk ? 'on' : ''}" aria-label="${i + 1} × ${cup} мл"></button>`).join('')}</div><b>${r1(wml / 1000)}/${G.water} л</b></div>
-    <div class="row small"><span class="muted">${cupName} ${cup} мл · нужно ${cups} ${plural(cups, 'раз', 'раза', 'раз')}${cups > wg ? ' (каждая клетка — ' + cupName + ')' : ''}</span>
+  // вода — крупно и видно в любой теме
+  h += `<div class="card water"><div class="row"><b>Вода</b><span><b>${r1(wml / 1000)}</b> / ${G.water} л</span></div>
+    <div class="wbar"><i style="width:${Math.min(100, wml / G.waterMl * 100)}%"></i></div>
+    <div class="wbtns"><button class="btn ghost" id="wMinus" aria-label="Убрать">−</button><button class="btn wplus" id="wPlus">+ ${cup >= 1000 ? cup / 1000 + ' л' : cup + ' мл'}</button>
     <select id="cupSel" aria-label="Объём тары">${[...new Set([150, 200, 250, 300, 330, 500, 750, 1000, 1500, cup])].sort((a, b) => a - b).map(v => `<option value="${v}" ${v === cup ? 'selected' : ''}>${v >= 1000 ? v / 1000 + ' л' : v + ' мл'}</option>`).join('')}<option value="custom">своё…</option></select></div>
-    ${S.cupEdit ? `<div class="weight" style="margin-top:8px"><input id="cupIn" type="number" inputmode="numeric" placeholder="Объём твоей тары, мл" value="${[150, 200, 250, 300, 330, 500, 750, 1000, 1500].includes(cup) ? '' : cup}"><button id="cupOk">ОК</button></div>` : ''}`;
+    ${S.cupEdit ? `<div class="weight"><input id="cupIn" type="number" inputmode="numeric" placeholder="Объём твоей тары, мл"><button id="cupOk">ОК</button></div>` : ''}</div>`;
 
-  h += `<h3>Сегодня</h3>` + (it.length ? MEALS.map((m, mi) => {
+  // приёмы пищи — всегда все четыре, у каждого «+»
+  h += MEALS.map((mn, mi) => {
     const rows = it.map((x, i) => [x, i]).filter(([x]) => (x.m ?? 3) === mi);
-    if (!rows.length) return '';
-    return `<div class="mealhd"><b>${m}</b><span class="muted">${Math.round(rows.reduce((s, [x]) => s + x.k, 0))} ккал</span></div><ul class="list">` + rows.map(([x, i]) =>
-      `<li><span>${esc(x.n)}${x.q && x.q !== 1 ? ` <b class="q">×${r1(x.q)}</b>` : ''}</span><em>${Math.round(x.k)}</em>
-        <span class="qty"><button data-dec="${i}" aria-label="Меньше">−</button><button data-inc="${i}" aria-label="Больше">+</button></span></li>`).join('') + `</ul>`;
-  }).join('') : `<p class="muted">Пока пусто. Напиши или скажи, что съел.</p>`);
-  const left = G.kcal - k, pLeft = G.protein - p;
-  if (left > 150) {
-    const m = mealNow(), byProt = pLeft > 20;
-    const ideas = MEAL_IDEAS.filter(x => x.k <= left + 80).sort((a, b) => (b.m === m) - (a.m === m) || (byProt ? b.p / b.k - a.p / a.k : 0)).slice(0, 3);
-    if (ideas.length) h += `<h3>Что съесть? Осталось ${left} ккал${pLeft > 0 ? `, ${pLeft} г белка` : ''}</h3><div class="ideas">${ideas.map(x =>
-      `<button data-idea="${MEAL_IDEAS.indexOf(x)}"><b>${esc(x.n)}</b><span>${x.k} ккал · ${x.p} г белка</span></button>`).join('')}</div>`;
-  }
+    const mk = Math.round(rows.reduce((s, [x]) => s + x.k, 0));
+    return `<div class="meal"><div class="mealhd"><b>${mn}</b><span class="muted">${mk ? mk + ' ккал' : ''}</span><button class="addm" data-addm="${mi}" aria-label="Добавить в ${mn}">+</button></div>` +
+      (rows.length ? `<ul class="list">${rows.map(([x, i]) => `<li><span>${esc(x.n)}${x.q && x.q !== 1 ? ` <b class="q">×${r1(x.q)}</b>` : ''}</span><em>${Math.round(x.k)}</em>
+        <span class="qty"><button data-dec="${i}" aria-label="Меньше">−</button><button data-inc="${i}" aria-label="Больше">+</button></span></li>`).join('')}</ul>` : '') + `</div>`;
+  }).join('');
 
-  h += `<details><summary>Все продукты</summary><div class="chiprow">${FOODS.map((f, i) => `<button data-i="${i}">${esc(f.n)}</button>`).join('')}</div></details>
+  // идеи правильной еды — всегда
+  const m = S.meal ?? mealNow();
+  const pool = MEAL_IDEAS.filter(x => x.m === m && (left <= 150 || x.k <= left + 100));
+  const list = (pool.length ? pool : MEAL_IDEAS.filter(x => x.m === 3)).sort((a, b) => (pLeft > 20 ? b.p / b.k - a.p / a.k : 0));
+  const off = (S.ideaOff || 0) % Math.max(1, list.length);
+  const ideas = list.slice(off).concat(list.slice(0, off)).slice(0, 3);
+  h += `<div class="row" style="margin-top:22px"><h3 style="margin:0">Идеи на ${MEALS[m].toLowerCase()}</h3><button class="link" id="moreIdeas">Ещё</button></div>
+    <div class="ideas">${ideas.map(x => `<button data-idea="${MEAL_IDEAS.indexOf(x)}"><b>${esc(x.n)}</b><span>${x.k} ккал · белок ${x.p} г${x.tip ? ' · ' + esc(x.tip) : ''}</span></button>`).join('')}</div>
     <details><summary>Своё с цифрами (с упаковки)</summary><div class="form">
       <input id="fn" placeholder="Название" maxlength="40"><input id="fk" type="number" inputmode="numeric" placeholder="ккал"><input id="fp" type="number" inputmode="numeric" placeholder="белок">
       <button id="fadd" aria-label="Добавить">+</button></div></details>
-    <details id="wkd"><summary>Последние 7 дней</summary><div id="fweek" class="muted">Считаю…</div></details>
-    <p class="muted small">Норма посчитана по анкете — подробности во вкладке «Профиль».</p>`;
+    <details id="wkd"><summary>Последние 7 дней</summary><div id="fweek" class="muted">Считаю…</div></details>`;
   $('#screen').innerHTML = h;
   $('#wkd').ontoggle = () => { if ($('#wkd').open) foodWeek(G); };
 
   if (S.parsed) showParsed();
   if (S.scanned) showScanned();
-  const ta = $('#ftext'); ta.oninput = () => { ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px'; };
-  $$('[data-w]').forEach(b => b.onclick = () => {
-    const n = +b.dataset.w, cur = Math.round(wml / cup);
-    S.food.waterMl = (cur === n ? n - 1 : n) * cup; delete S.food.water; saveFood(); haptic(); renderFood();
-  });
-  $('#cupSel').onchange = e => {
-    const v = e.target.value;
-    if (v === 'custom') { S.cupEdit = true; renderFood(); const ci = $('#cupIn'); if (ci) ci.focus(); return; }
-    S.cupEdit = false; S.profile.cup = +v; Store.set('profile', S.profile); // выпитые миллилитры не меняются, меняется только размер клетки
-    S.food.waterMl = wml; delete S.food.water; saveFood(); haptic(); renderFood();
-  };
-  $$('[data-meal]').forEach(b => b.onclick = () => { S.meal = +b.dataset.meal; haptic(); $$('[data-meal]').forEach(x => x.classList.toggle('on', x === b)); });
-  $$('[data-rec]').forEach(b => b.onclick = () => { const r = rec[+b.dataset.rec]; addFood([{ n: r.n, k: r.k, p: r.p, f: r.f || 0, c: r.c || 0 }]); });
-  $$('[data-i]').forEach(b => b.onclick = () => addFood([{ ...FOODS[+b.dataset.i] }]));
-  $('#fcalc').onclick = () => { const t = ta.value.trim(); if (!t) { ta.focus(); return; } S.parsed = parseFood(t); S.scanned = null; showParsed(); };
+  const ta = $('#ftext');
+  $('#fcalc').onclick = () => { const t = ta.value.trim(); if (!t) { ta.focus(); toast('Напиши или скажи, что съел'); return; } S.parsed = parseFoodMeals(t); S.scanned = null; showParsed(); };
   $('#fmic').onclick = startVoice;
   $('#fscan').onclick = startScan;
+  $$('[data-addm]').forEach(b => b.onclick = () => { S.meal = +b.dataset.addm; renderFood(); scrollTo({ top: 0, behavior: 'smooth' }); setTimeout(() => $('#ftext') && $('#ftext').focus(), 300); });
+  $$('[data-rec]').forEach(b => b.onclick = () => { const r = rec[+b.dataset.rec]; addFood([{ n: r.n, k: r.k, p: r.p, f: r.f || 0, c: r.c || 0 }]); });
+  $$('[data-idea]').forEach(b => b.onclick = () => { const x = MEAL_IDEAS[+b.dataset.idea]; addFood([{ n: x.n, k: x.k, p: x.p, f: x.f, c: x.c, m }]); });
+  $('#moreIdeas').onclick = () => { S.ideaOff = (S.ideaOff || 0) + 3; renderFood(); };
+  const setW = v => { S.food.waterMl = Math.max(0, v); delete S.food.water; saveFood(); haptic(); renderFood(); };
+  $('#wPlus').onclick = () => setW(wml + cup);
+  $('#wMinus').onclick = () => setW(wml - cup);
+  $('#cupSel').onchange = ev => {
+    const v = ev.target.value;
+    if (v === 'custom') { S.cupEdit = true; renderFood(); const ci = $('#cupIn'); if (ci) ci.focus(); return; }
+    S.cupEdit = false; S.profile.cup = +v; Store.set('profile', S.profile); haptic(); renderFood();
+  };
+  const cok = $('#cupOk'); if (cok) cok.onclick = () => {
+    const v = parseInt($('#cupIn').value, 10);
+    if (!(v >= 50 && v <= 3000)) { toast('Введи объём от 50 до 3000 мл'); return; }
+    S.cupEdit = false; S.profile.cup = v; Store.set('profile', S.profile); notify(); renderFood();
+  };
   $('#fadd').onclick = () => {
     const n = $('#fn').value.trim() || 'Своё', kk = Math.max(0, +$('#fk').value || 0), pr = Math.max(0, +$('#fp').value || 0);
     if (kk || pr) addFood([{ n, k: Math.min(kk, 5000), p: Math.min(pr, 300), f: 0, c: 0 }]);
@@ -843,17 +911,11 @@ function renderFood() {
     it.splice(i, 1); saveFood(); renderFood();
     toast(`Убрано: ${x.n}`, () => { S.food.items = snap; saveFood(); renderFood(); });
   });
-  const cok = $('#cupOk'); if (cok) cok.onclick = () => {
-    const v = parseInt($('#cupIn').value, 10);
-    if (!(v >= 50 && v <= 3000)) { toast('Введи объём от 50 до 3000 мл'); return; }
-    S.cupEdit = false; S.profile.cup = v; Store.set('profile', S.profile); S.food.waterMl = wml; saveFood(); notify(); renderFood();
-  };
-  $$('[data-idea]').forEach(b => b.onclick = () => { const x = MEAL_IDEAS[+b.dataset.idea]; addFood([{ n: x.n, k: x.k, p: x.p, f: x.f, c: x.c }]); });
 }
 function addFood(list) {
   const m = S.meal ?? mealNow();
-  list.forEach(x => { x.m = m; });
-  S.food.items.push(...list); saveFood();
+  list.forEach(x => { if (x.m == null) x.m = m; });
+  S.food.items.push(...list); saveFood(); S.meal = null;
   if (lsGet('foodDayLast') !== S.today) { lsSet('foodDays', (lsGet('foodDays') || 0) + 1); lsSet('foodDayLast', S.today); } // для достижения
   let rec = lsGet('recent') || [];
   list.forEach(x => { rec = rec.filter(r => r.n !== x.n); rec.unshift({ n: x.n, k: x.k, p: x.p, f: x.f || 0, c: x.c || 0 }); });
@@ -866,7 +928,8 @@ function showParsed() {
   const { items, unknown } = S.parsed;
   const t = key => Math.round(items.reduce((s, x) => s + (+x[key] || 0), 0));
   let h = `<div class="prev">`;
-  if (items.length) h += `<ul class="list">${items.map((x, i) => `<li><span>${esc(x.n)}</span><em>${x.k} ккал</em><button data-pdel="${i}" aria-label="Убрать">×</button></li>`).join('')}</ul>
+  const dm = S.meal ?? mealNow();
+  if (items.length) h += `<ul class="list">${items.map((x, i) => `<li><span><small class="mtag">${MEALS[x.m ?? dm]}</small> ${esc(x.n)}</span><em>${x.k} ккал</em><button data-pdel="${i}" aria-label="Убрать">×</button></li>`).join('')}</ul>
     <div class="row" style="margin-top:8px"><b>Итого ${t('k')} ккал</b><span class="muted">Б ${t('p')} · Ж ${t('f')} · У ${t('c')} г</span></div>`;
   if (unknown.length) h += `<p class="muted">Не знаю: «${unknown.map(esc).join('», «')}». Впиши это ниже в «Своё с цифрами» (калории есть на упаковке).</p>`;
   if (!items.length && !unknown.length) h += `<p class="muted">Ничего не понял. Пиши через запятую: «2 яйца, гречка 200 г».</p>`;
@@ -910,7 +973,7 @@ function startVoice() {
   recog.onresult = ev => {
     const txt = [...ev.results].map(r => r[0].transcript).join(' ');
     ta.value = before + txt;
-    if (ev.results[ev.results.length - 1].isFinal) { S.parsed = parseFood(ta.value); S.scanned = null; showParsed(); }
+    if (ev.results[ev.results.length - 1].isFinal) { S.parsed = parseFoodMeals(ta.value); S.scanned = null; showParsed(); }
   };
   recog.onerror = ev => { hint.textContent = ev.error === 'not-allowed' ? 'Нет доступа к микрофону. Можно сказать через микрофон на клавиатуре.' : 'Не расслышал. Попробуй ещё раз или скажи через клавиатуру.'; };
   recog.onend = () => { mic.classList.remove('rec'); recog = null; if (hint.textContent.startsWith('Слушаю')) hint.textContent = ''; };

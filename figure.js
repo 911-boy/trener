@@ -32,7 +32,7 @@
     chairdips: { a: P({ t: -5, ua: -15, fa: -5, th: 80, sh: 10 }), b: P({ t: -5, ua: -65, fa: 0, th: 80, sh: 20 }), fix: ['W', 40, 62], props: ['chairHands'] },
     bench: { a: P({ t: 90, ua: 180, fa: 180, th: -95, sh: 0 }), b: P({ t: 90, ua: 15, fa: 175, th: -95, sh: 0 }), fix: ['H', 46, 66], props: ['bench'] },
     pike: { a: P({ t: 130, ua: 50, fa: 50, th: -20, sh: -20 }), b: P({ t: 145, ua: 100, fa: 20, th: -20, sh: -20 }), fix: ['A', 30, 92] },
-    press: { a: P({ front: 1, ua: 80, fa: 172, th: 5, sh: 5 }), b: P({ front: 1, ua: 165, fa: 175, th: 5, sh: 5 }), fix: ['A', 60, 92] },
+    press: { a: P({ front: 1, ua: 100, fa: 180, th: 9, sh: 2 }), b: P({ front: 1, ua: 158, fa: 170, th: 9, sh: 2 }), fix: ['A', 60, 92] },
     pullup: { a: P({ ua: 178, fa: 180, th: 8, sh: -15 }), b: P({ t: 5, ua: 40, fa: 175, th: 20, sh: -25 }), fix: ['W', 60, 16], props: ['bar'] },
     hang: { a: P({ ua: 178, fa: 180, th: 4 }), b: P({ ua: 178, fa: 180, th: 8, sh: -8 }), fix: ['W', 60, 16], props: ['bar'] },
     legraise: { a: P({ ua: 178, fa: 180, th: 4 }), b: P({ t: -5, ua: 178, fa: 180, th: 100, sh: 10 }), fix: ['W', 60, 16], props: ['bar'] },
