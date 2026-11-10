@@ -154,11 +154,10 @@ function dayActivity() {
   const share = S.profile.goal === 'lose' ? 0.5 : 1; // при похудении возвращаем в еду половину — запас на неточность
   return { tr, steps: S.food.steps || 0, st, acts, total, share, bonus: sportToFood() ? Math.round(total * share / 10) * 10 : 0 };
 }
-// Нормы на сегодня = база + заработанное спортом (прибавка идёт в углеводы).
-function todayNorms() {
-  const G = norms(), A = dayActivity();
-  return { ...G, base: G.kcal, kcal: G.kcal + A.bonus, carbs: G.carbs + Math.round(A.bonus / 4), A };
-}
+// Влад, 10.11: «норма + спорт» сбивает с толку. Норма стоит на месте, сожжённое вычитается из съеденного:
+// съедено 900 − спорт 440 = 460 из 2600.
+function todayNorms() { return { ...norms(), A: dayActivity() }; }
+const eatenNet = (k, A) => Math.max(0, k - A.bonus);
 const GOAL_NAMES = { gain: 'Набрать мышцы', lose: 'Похудеть', fit: 'Быть в форме', strength: 'Стать сильнее' };
 const ACT_NAMES = { low: 'Сидячая (учёба, офис)', mid: 'Средняя (хожу пешком, бываю на ногах)', high: 'Высокая (физическая работа, много движения)' };
 
@@ -317,6 +316,14 @@ const workoutKcal = list => Math.round(list.reduce((s, id) => s + kcalOf(id), 0)
 const workoutMin = list => Math.round(list.reduce((s, id) => { const e = E(id); if (!e) return s;
   const work = e.sets * (e.type === 'time' ? (e.lo + e.hi) / 2 : (e.lo + e.hi) / 2 * 3.2 * (e.side ? 2 : 1)); return s + (work + (e.sets - 1) * e.rest) / 60 + 1; }, 0));
 
+/* ---------- раскрывающиеся секции: помнят, открыты или закрыты ---------- */
+const secState = () => lsGet('sec') || {};
+function sec(id, title, right, body, defOpen) {
+  const st = secState(), open = st[id] ?? defOpen;
+  return `<details class="sec" data-sec="${id}" ${open ? 'open' : ''}><summary><span class="st">${title}</span>${right ? `<span class="sr">${right}</span>` : ''}</summary><div class="sb">${body}</div></details>`;
+}
+document.addEventListener('toggle', ev => { const d = ev.target; if (d && d.dataset && d.dataset.sec) { const st = secState(); st[d.dataset.sec] = d.open; lsSet('sec', st); } }, true);
+
 /* ---------- вкладки ---------- */
 $$('.tabs button').forEach(b => b.onclick = () => {
   S.tab = b.dataset.tab; S.choosing = false;
@@ -449,8 +456,8 @@ function renderToday() {
   if (!S.workout.wid && !planned && !S.anyway && !started && firstTime && !S.waitFirst) {
     const nx = nextTraining();
     h += `<p class="sub">Твоя первая тренировка по плану — ${nx ? nx.label : 'скоро'}${nx ? `: <b>${esc(nx.w.name)}</b>` : ''}. Можно начать и сегодня.</p>
-      <button class="btn" id="startNow">Начать сегодня</button><button class="btn ghost" id="waitFirst">Подожду${nx ? ' до ' + nx.label : ''}</button>${firstTips()}`;
-    $('#screen').innerHTML = h;
+      <button class="btn" id="startNow">Начать сегодня</button><button class="btn ghost" id="waitFirst">Подожду${nx ? ' до ' + nx.label : ''}</button>${firstTips()}${actSection()}`;
+    $('#screen').innerHTML = h; bindActivity();
     $('#startNow').onclick = () => { S.workout.wid = (nx ? nx.w : S.program.workouts[0]).id; S.anyway = true; haptic(); renderToday(); };
     $('#waitFirst').onclick = () => { S.waitFirst = true; renderToday(); };
     bindStrip();
@@ -460,8 +467,8 @@ function renderToday() {
     const nx = nextTraining();
     h += `<p class="sub">Сегодня день отдыха.${nx ? ` Следующая тренировка — ${nx.label}: <b>${esc(nx.w.name)}</b>.` : ''}</p>
       <div class="banner">Мышцы растут, пока отдыхаешь. Сегодня главное — еда, белок и вода.</div>
-      <button class="btn ghost" id="anyway">Всё равно потренироваться</button>`;
-    $('#screen').innerHTML = h;
+      <button class="btn ghost" id="anyway">Всё равно потренироваться</button>${actSection()}`;
+    $('#screen').innerHTML = h; bindActivity();
     $('#anyway').onclick = () => { S.choosing = true; renderToday(); };
     bindStrip();
     return;
@@ -478,18 +485,18 @@ function renderToday() {
     <h2>${esc(w.name)}</h2>
     <div class="hero-meta"><span>${core.length - 2} упражнений</span><span>~${workoutMin(core)} мин</span><span>≈ ${workoutKcal(core)} ккал</span></div>
     ${started ? `<div class="bar"><i style="width:${done / core.length * 100}%"></i></div>
-      <div class="hero-sub">Сделано ${done} из ${core.length} · сожжено ≈ ${burned} ккал${sportToFood() ? ' → в еду' : ''}${S.workout.start && !S.workout.finished ? ` · <span id="clock">${mins(S.workout.start)}</span>` : ''}</div>` : ''}
+      <div class="hero-sub">Сделано ${done} из ${core.length} · сожжено ≈ ${burned} ккал${sportToFood() ? ' → минус из еды' : ''}${S.workout.start && !S.workout.finished ? ` · <span id="clock">${mins(S.workout.start)}</span>` : ''}</div>` : ''}
     ${S.workout.finished ? `<div class="hero-done ${isFull(S.workout) ? '' : 'part'}">${isFull(S.workout) ? 'Тренировка завершена' : `Неполная тренировка · ${Math.round(completion(S.workout) * 100)} %`}${S.workout.start && S.workout.end ? ` · ${Math.max(1, Math.round((S.workout.end - S.workout.start) / 60000))} мин` : ''}</div>
-      ${burned && sportToFood() ? `<div class="hero-sub">+${burned} ккал добавлено к норме еды</div>` : ''}`
+      ${burned && sportToFood() ? `<div class="hero-sub">${burned} ккал вычтено из съеденного</div>` : ''}`
       : nextId ? `<button class="btn big" id="go">${started ? `Продолжить: ${esc(LIB[nextId].name)}` : 'Начать тренировку'}</button>`
       : `<button class="btn big" id="toFinish">Завершить тренировку</button>`}
   </div>`;
   if (isDeload()) h += `<div class="tip"><b>Разгрузочная неделя.</b> На подход меньше и вес полегче — тело восстанавливается и потом растёт быстрее.</div>`;
   if (firstTime && !S.workout.finished) h += firstTips();
 
-  h += `<h3>Упражнения</h3><div class="exlist">` + core.map((id, i) => rowHTML(id, i)).join('') + `</div>`;
   const extra = (w.extra || []).filter(id => LIB[id]);
-  if (extra.length) h += `<details><summary>Ещё по желанию (${extra.length})</summary><div class="exlist">${extra.map((id, i) => rowHTML(id, core.length + i)).join('')}</div></details>`;
+  h += sec('ex', 'Упражнения', `${done} / ${core.length}`, `<div class="exlist">` + core.map((id, i) => rowHTML(id, i)).join('') + `</div>`, true);
+  if (extra.length) h += sec('extra', 'Ещё по желанию', extra.length, `<div class="exlist">${extra.map((id, i) => rowHTML(id, core.length + i)).join('')}</div>`, false);
 
   if (!S.workout.finished && started) {
     h += `<div class="card" id="finishBox"><b>Закончить тренировку</b><p class="muted">Как далось?</p>
@@ -499,8 +506,10 @@ function renderToday() {
   } else if (S.workout.finished) {
     if (S.workout.feel != null || S.workout.note) h += `<div class="card">${S.workout.feel != null ? 'Далось: ' + FEEL[S.workout.feel].toLowerCase() + '. ' : ''}${esc(S.workout.note || '')}</div>`;
   }
+  h += actSection();
   if (!S.workout.finished) h += `<button class="btn ghost" id="choose">Сделать другую тренировку</button>`;
   $('#screen').innerHTML = h;
+  bindActivity();
 
   $$('.exrow').forEach(b => b.onclick = () => openExercise(b.dataset.id));
   bindStrip();
@@ -521,11 +530,12 @@ function renderToday() {
 // Сводка дня одной строкой: сколько съел из нормы (с учётом спорта), вода, шаги. Нажал — открылась «Еда».
 function dayStrip() {
   if (S.choosing) return '';
-  const G = todayNorms(), k = Math.round(S.food.items.reduce((s, x) => s + (+x.k || 0), 0)), wml = S.food.waterMl ?? (S.food.water || 0) * 250;
-  const cell = (v, of, n, cls) => `<button class="dcell ${cls}" data-go="food"><b>${v}</b><span>${of}</span><i style="--v:${n}%"></i><em>${cls === 'k' ? 'еда' : cls === 'w' ? 'вода' : 'активность'}</em></button>`;
-  return `<div class="daystrip">${cell(k, '/ ' + G.kcal, Math.min(100, k / G.kcal * 100), 'k')}${cell(r1(wml / 1000), '/ ' + G.water + ' л', Math.min(100, wml / G.waterMl * 100), 'w')}${cell('+' + G.A.total, 'ккал', G.A.total ? 100 : 0, 'a')}</div>`;
+  const G = todayNorms(), k = eatenNet(Math.round(S.food.items.reduce((s, x) => s + (+x.k || 0), 0)), G.A), wml = S.food.waterMl ?? (S.food.water || 0) * 250;
+  const cell = (v, of, n, cls) => `<button class="dcell ${cls}" data-go="${cls === 'a' ? 'act' : 'food'}"><b>${v}</b><span>${of}</span><i style="--v:${n}%"></i><em>${cls === 'k' ? 'еда' : cls === 'w' ? 'вода' : 'активность'}</em></button>`;
+  return `<div class="daystrip">${cell(k, '/ ' + G.kcal, Math.min(100, k / G.kcal * 100), 'k')}${cell(r1(wml / 1000), '/ ' + G.water + ' л', Math.min(100, wml / G.waterMl * 100), 'w')}${cell(G.A.total, 'ккал', G.A.total ? 100 : 0, 'a')}</div>`;
 }
-function bindStrip() { $$('[data-go]').forEach(b => b.onclick = () => { S.tab = b.dataset.go; $$('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === S.tab)); haptic(); render(); scrollTo(0, 0); }); }
+function bindStrip() { $$('[data-go]').forEach(b => b.onclick = () => {
+  if (b.dataset.go === 'act') { const d = $('[data-sec="act"]'); if (d) { d.open = true; haptic(); setTimeout(() => d.scrollIntoView({ behavior: 'smooth', block: 'start' }), 30); } return; } S.tab = b.dataset.go; $$('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === S.tab)); haptic(); render(); scrollTo(0, 0); }); }
 function rowHTML(id, i) {
   const e = E(id), n = setsDone(id), ok = n >= setsOf(e);
   return `<button class="exrow ${ok ? 'done' : n ? 'part' : ''}" data-id="${id}">
@@ -767,31 +777,33 @@ function openCam(id, e, vals) {
 /* =================== ПЛАН =================== */
 function renderPlan() {
   const created = (S.profile && S.profile.created) || S.today;
-  let h = `<div class="row"><h1>План</h1><button class="btn sm ${S.editPlan ? '' : 'ghost'}" id="editPlan">${S.editPlan ? 'Готово' : 'Изменить'}</button></div>
-    <p class="sub">${S.program.workouts.filter(w => w.weekday != null).length} ${plural(S.program.workouts.filter(w => w.weekday != null).length, 'тренировка', 'тренировки', 'тренировок')} в неделю.${S.program.workouts.some(w => w.custom && w.weekday == null) ? ' Свои «на любой день» — ниже.' : ''}${S.editPlan ? ' Меняй дни, порядок, заменяй и добавляй упражнения.' : ''}</p><h3>Ближайшие 2 недели</h3><ul class="cal">`;
+  const perWeek = S.program.workouts.filter(w => w.weekday != null).length;
+  let h = `<div class="row"><h1>План</h1><button class="btn sm ${S.editPlan ? '' : 'ghost'} fit" id="editPlan">${S.editPlan ? 'Готово' : 'Изменить'}</button></div>
+    <p class="sub">${perWeek} ${plural(perWeek, 'тренировка', 'тренировки', 'тренировок')} в неделю</p><div class="wk">${WEEK.map(d => `<span class="wkh">${WD[d]}</span>`).join('')}`;
+  // 2 недели клетками: зелёная — сделано, жёлтая — неполная, красная точка — пропуск, рамка — сегодня, точка — запланировано
   const start = new Date(); start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
   for (let i = 0; i < 14; i++) {
     const d = new Date(start); d.setDate(start.getDate() + i);
-    const k = dateKey(d), rec = S.history[k], trained = isTrained(rec);
-    const w = (trained && rec.wid && W(rec.wid)) || plannedFor(d);
-    const past = k < S.today, isToday = k === S.today, counted = k >= created;
-    if (!w && !trained && !isToday) continue; // дни отдыха не показываем — меньше шума
-    const full = trained && isFull(rec);
-    const cls = full ? 'ok' : trained ? 'part' : isToday ? 'now' : past && w && counted ? 'miss' : '';
-    h += `<li class="${cls}"><span>${WD[d.getDay()]} ${d.getDate()}</span><b>${w ? esc(w.name) : trained ? 'Тренировка' : '<i>отдых</i>'}</b><em>${full ? 'сделано' : trained ? `${isToday && !rec.finished ? 'идёт' : 'неполная'} · ${Math.round(completion(rec) * 100)} %` : isToday && w ? 'сегодня' : past && w && counted ? 'пропуск' : ''}</em></li>`;
+    const k = dateKey(d), rec = S.history[k], trained = isTrained(rec), w = plannedFor(d);
+    const past = k < S.today, counted = k >= created;
+    const cls = trained ? (isFull(rec) ? 'ok' : 'part') : past && w && counted ? 'miss' : w ? 'plan' : '';
+    h += `<span class="dc ${cls} ${k === S.today ? 'now' : ''} ${past ? 'past' : ''}"${trained && !isFull(rec) ? ` style="--p:${Math.round(completion(rec) * 100)}%"` : ''}><b>${d.getDate()}</b><i></i></span>`;
   }
-  h += `</ul>`;
-  S.program.workouts.forEach(w => {
-    h += `<div class="wsec"><div class="wsechd"><b>${esc(w.name)}${w.custom ? ' <span class="tag">своя</span>' : ''}</b>
-      ${S.editPlan ? `<select data-wd="${w.id}" aria-label="День недели">${w.custom ? `<option value="" ${w.weekday == null ? 'selected' : ''}>любой</option>` : ''}${WEEK.map(d => `<option value="${d}" ${d === w.weekday ? 'selected' : ''}>${WD[d]}</option>`).join('')}</select>` : `<span class="muted">${dayLabel(w)}</span>`}</div>
-      <p class="muted">${w.list.length - 2} упражнений · ~${workoutMin(w.list)} мин · ≈ ${workoutKcal(w.list)} ккал</p>` +
-      w.list.map((id, i) => LIB[id] ? `<div class="prow"><button class="pname" data-open="${id}"><b>${esc(LIB[id].name)}</b><span>${setsOf(E(id)) > 1 ? setsOf(E(id)) + ' × ' : ''}${range(E(id))}</span></button>
-        ${!S.editPlan || ['warmup', 'stretch'].includes(id) ? '' : `<button class="mini" data-act="up" data-w="${w.id}" data-i="${i}" aria-label="Выше">↑</button><button class="mini" data-act="down" data-w="${w.id}" data-i="${i}" aria-label="Ниже">↓</button><button class="mini" data-act="swap" data-w="${w.id}" data-i="${i}">Заменить</button><button class="mini" data-act="del" data-w="${w.id}" data-i="${i}" aria-label="Убрать">×</button>`}</div>` : '').join('') +
-      (S.editPlan ? `<button class="btn ghost sm" data-add="${w.id}">+ Добавить упражнение</button>${w.custom ? `<div class="exbtns"><button class="btn ghost sm" data-cedit="${w.id}">В калькулятор</button><button class="btn ghost sm danger" data-cdel="${w.id}">Удалить</button></div>` : ''}` : '') + `</div>`;
+  h += `</div><div class="legend"><span><i class="on"></i>сделано</span><span><i class="half"></i>неполная</span><span><i class="dot"></i>по плану</span></div>`;
+  h += `<h3>Тренировки</h3>`;
+  const ws = S.program.workouts.slice().sort((a, b) => (a.weekday == null) - (b.weekday == null) || WEEK.indexOf(a.weekday) - WEEK.indexOf(b.weekday));
+  ws.forEach(w => {
+    const body = w.list.map((id, i) => LIB[id] ? `<div class="prow"><button class="pname" data-open="${id}"><b>${esc(LIB[id].name)}</b><span>${setsOf(E(id)) > 1 ? setsOf(E(id)) + ' × ' : ''}${range(E(id))}</span></button>
+        ${!S.editPlan || ['warmup', 'stretch'].includes(id) ? '' : `<span class="pctl"><button class="mini" data-act="up" data-w="${w.id}" data-i="${i}" aria-label="Выше">↑</button><button class="mini" data-act="down" data-w="${w.id}" data-i="${i}" aria-label="Ниже">↓</button><button class="mini" data-act="swap" data-w="${w.id}" data-i="${i}" aria-label="Заменить">⇄</button><button class="mini" data-act="del" data-w="${w.id}" data-i="${i}" aria-label="Убрать">×</button></span>`}</div>` : '').join('') +
+      (S.editPlan ? `<div class="pedit"><label>День <select data-wd="${w.id}">${w.custom ? `<option value="" ${w.weekday == null ? 'selected' : ''}>любой</option>` : ''}${WEEK.map(d => `<option value="${d}" ${d === w.weekday ? 'selected' : ''}>${WD[d]}</option>`).join('')}</select></label>
+        <button class="btn ghost sm" data-add="${w.id}">+ Упражнение</button></div>${w.custom ? `<div class="exbtns"><button class="btn ghost sm" data-cedit="${w.id}">В калькулятор</button><button class="btn ghost sm danger" data-cdel="${w.id}">Удалить</button></div>` : ''}` : '');
+    const title = `<small class="wd">${w.weekday == null ? 'любой' : WD[w.weekday]}</small>${esc(w.name)}${w.custom ? ' <span class="tag">своя</span>' : ''}`;
+    h += S.editPlan ? `<details class="sec" open><summary><span class="st">${title}</span><span class="sr">${MAIN(w.list).length} упр · ~${workoutMin(w.list)} мин</span></summary><div class="sb">${body}</div></details>`
+      : sec('w_' + w.id, title, `${MAIN(w.list).length} упр · ~${workoutMin(w.list)} мин`, body, false);
   });
-  h += `<button class="btn" id="build">Собрать свою тренировку</button>`;
-  h += S.editPlan ? `<button class="btn ghost" id="rebuild">Пересобрать план по анкете</button><p class="muted">Свои тренировки при пересборке останутся.</p>` : '';
-  h += `<details><summary>Как растёт нагрузка</summary><p class="muted">У каждого упражнения диапазон, например 10–15. Дошёл до верхней цифры во всех подходах — приложение скажет «пора усложнять» и как. Пропустил день — просто делай следующую тренировку.</p></details>`;
+  h += `<button class="btn ghost" id="build">+ Собрать свою тренировку</button>`;
+  h += S.editPlan ? `<button class="link center" id="rebuild">Пересобрать план по анкете</button><p class="muted small center">Свои тренировки при пересборке останутся.</p>` : '';
+  h += sec('howgrow', 'Как растёт нагрузка', '', `<p class="muted">У каждого упражнения диапазон, например 10–15. Дошёл до верхней цифры во всех подходах — приложение скажет «пора усложнять» и как. Пропустил день — просто делай следующую тренировку.</p>`, false);
   $('#screen').innerHTML = h;
 
   $('#editPlan').onclick = () => { S.editPlan = !S.editPlan; haptic(); renderPlan(); };
@@ -953,17 +965,15 @@ function renderFood() {
   const pct = (v, g) => Math.min(100, v / g * 100);
   const cup = S.profile.cup || 250, wml = S.food.waterMl ?? (S.food.water || 0) * 250;
   const rec = lsGet('recent') || [];
-  const left = G.kcal - k, pLeft = G.protein - p;
-  const basePct = A.bonus ? G.base / G.kcal * 100 : 100;
+  const net = eatenNet(k, A), left = G.kcal - net, pLeft = G.protein - p;
 
-  // Сводка: съедено / норма. Заработанное спортом — отдельный зелёный кусок шкалы и строка «норма + спорт = итого».
+  // Сводка: съедено минус сожжённое спортом. На шкале сожжённое — зелёная штриховка, «стёртая» с конца съеденного.
   let h = `<h1>Еда</h1>
-    <div class="card sum"><div class="row"><div><span class="big">${k}</span><span class="muted"> / ${G.kcal} ккал</span></div><span class="muted">${left > 0 ? 'осталось ' + left : 'норма есть'}</span></div>
-    <div class="bar ${A.bonus ? 'sport' : ''} ${k > G.kcal * 1.1 && S.profile.goal === 'lose' ? 'over' : ''}" style="--b:${basePct}%"><i style="width:${pct(k, G.kcal)}%"></i></div>
-    ${A.bonus ? `<div class="eqline"><span>норма ${G.base}</span><span>+</span><span class="earn">спорт ${A.bonus}</span><span>=</span><b>${G.kcal}</b></div>` : ''}
+    <div class="card sum"><div class="row"><div><span class="big">${net}</span><span class="muted"> / ${G.kcal} ккал</span></div><span class="muted">${left > 0 ? 'осталось ' + left : 'норма есть'}</span></div>
+    <div class="bar burn ${net > G.kcal * 1.1 && S.profile.goal === 'lose' ? 'over' : ''}"><i style="width:${pct(net, G.kcal)}%"></i>${A.bonus && k ? `<b style="left:${pct(net, G.kcal)}%;width:${pct(k, G.kcal) - pct(net, G.kcal)}%"></b>` : ''}</div>
+    ${A.bonus ? `<div class="eqline"><span>съедено ${k}</span><span>−</span><span class="earn">спорт ${A.bonus}</span><span>=</span><b>${net}</b>${A.share < 1 ? '<span>(при похудении — половина)</span>' : ''}</div>` : ''}
     <div class="macros">${[['Белки', p, G.protein, 'p'], ['Жиры', fsum, G.fat, 'f'], ['Углеводы', csum, G.carbs, 'c']].map(([n, v, g, cl]) =>
       `<div><span>${n}</span><b>${v}<small> / ${g} г</small></b><div class="bar thin ${cl}"><i style="width:${pct(v, g)}%"></i></div></div>`).join('')}</div></div>`;
-  h += activityCard(A);
 
   h += `<div class="card inputcard"><textarea id="ftext" rows="2" placeholder="Что съел? Скажи или напиши: «на завтрак 4 яйца и чай, на обед гречка с курицей»"></textarea>
     <div class="inrow"><button class="icon big" id="fmic" aria-label="Сказать голосом"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
@@ -1039,7 +1049,6 @@ function renderFood() {
     if (!kk && !pr) { toast('Впиши хотя бы калории'); return; }
     addFood([{ n, k: Math.round(Math.min(kk || pr * 4 + ff * 9 + cc * 4, 5000)), p: r1(Math.min(pr, 300)), f: r1(ff), c: r1(cc) }]);
   };
-  bindActivity();
   const scale = (x, q) => { if (!x.b) { x.b = { k: x.k, p: x.p, f: x.f || 0, c: x.c || 0 }; x.q = 1; } x.q = q; for (const key of ['k', 'p', 'f', 'c']) x[key] = key === 'k' ? Math.round(x.b.k * q) : r1(x.b[key] * q); };
   $$('[data-inc]').forEach(b => b.onclick = () => { const x = it[+b.dataset.inc]; scale(x, (x.q || 1) + 0.5); saveFood(); haptic(); renderFood(); });
   $$('[data-dec]').forEach(b => b.onclick = () => {
@@ -1051,17 +1060,21 @@ function renderFood() {
   });
 }
 // Блок «Активность»: тренировка из приложения считается сама, шаги и другой спорт вписываются руками.
-function activityCard(A) {
+function actSection() {
+  const A = dayActivity();
+  return sec('act', 'Активность за день', A.total ? `<span class="earn">${A.total} ккал</span>` : 'шаги, бег, велик', activityBody(A), false);
+}
+function activityBody(A) {
   const st = A.st, base = STEP_BASE[S.profile.activity];
   const rows = [];
-  if (A.tr) rows.push(`<li><span>Тренировка в приложении</span><em class="earn">+${A.tr}</em></li>`);
-  if (A.steps) rows.push(`<li><span>Шаги ${A.steps.toLocaleString('ru')}<br><small class="muted">${st.extra ? `сверх обычных ${base.toLocaleString('ru')}: ${st.extra.toLocaleString('ru')}` : `обычные ${base.toLocaleString('ru')} уже в норме`}</small></span><em class="earn">+${st.k}</em></li>`);
-  A.acts.forEach((a, i) => rows.push(`<li><span>${esc(ACTS[a.t] ? ACTS[a.t].n : a.t)} · ${a.min} мин</span><em class="earn">+${a.k}</em><button data-actdel="${i}" aria-label="Убрать">×</button></li>`));
+  if (A.tr) rows.push(`<li><span>Тренировка в приложении</span><em class="earn">${A.tr}</em></li>`);
+  if (A.steps) rows.push(`<li><span>Шаги ${A.steps.toLocaleString('ru')}<br><small class="muted">${st.extra ? `сверх обычных ${base.toLocaleString('ru')}: ${st.extra.toLocaleString('ru')}` : `обычные ${base.toLocaleString('ru')} уже в норме`}</small></span><em class="earn">${st.k}</em></li>`);
+  A.acts.forEach((a, i) => rows.push(`<li><span>${esc(ACTS[a.t] ? ACTS[a.t].n : a.t)} · ${a.min} мин</span><em class="earn">${a.k}</em><button data-actdel="${i}" aria-label="Убрать">×</button></li>`));
   const pick = S.actPick;
-  return `<div class="card act"><div class="row"><b>Активность</b><span class="earn big2">${A.total ? '+' + A.total + ' ккал' : ''}</span></div>
-    ${rows.length ? `<ul class="list">${rows.join('')}</ul>` : '<p class="muted">Шаги, бег, велик, своя силовая — впиши, и это прибавится к норме еды. Тренировка из приложения считается сама.</p>'}
-    ${A.total && sportToFood() && A.share < 1 ? `<p class="muted small">Ты худеешь — в еду засчитываю половину (+${A.bonus}): часы и формулы часто завышают расход.</p>` : ''}
-    ${A.total && !sportToFood() ? '<p class="muted small">Прибавка к еде выключена в Профиле.</p>' : ''}
+  return `<div class="act">
+    ${rows.length ? `<ul class="list">${rows.join('')}</ul>` : '<p class="muted">Шаги, бег, велик, своя силовая — впиши, и сожжённое вычтется из съеденного во вкладке «Еда». Тренировка из приложения считается сама.</p>'}
+    ${A.total && sportToFood() && A.share < 1 ? `<p class="muted small">Ты худеешь — из еды вычитаю половину (${A.bonus}): часы и формулы часто завышают расход.</p>` : ''}
+    ${A.total && !sportToFood() ? '<p class="muted small">Вычитание из еды выключено в Профиле.</p>' : ''}
     <div class="weight"><input id="stepsIn" type="text" inputmode="numeric" placeholder="Шаги за день${A.steps ? ' · сейчас ' + A.steps : ''}"><button id="stepsOk">Записать</button></div>
     ${S.actOpen || pick ? `<div class="chiprow acts">${Object.entries(ACTS).map(([t, a]) => `<button data-act-t="${t}" class="${pick === t ? 'on' : ''}">${esc(a.n)}</button>`).join('')}</div>`
       : '<button class="btn ghost sm" id="actOpen">+ Бег, велик, силовая…</button>'}
@@ -1069,15 +1082,16 @@ function activityCard(A) {
       <div class="weight"><input id="actMin" type="text" inputmode="numeric" placeholder="Своё, мин"><button id="actOk">Добавить</button></div></div>` : ''}</div>`;
 }
 function bindActivity() {
-  const save = () => { saveFood(); renderFood(); checkAch(); };
+  const save = () => { saveFood(); const y = scrollY; render(); scrollTo(0, y); checkAch(); };
   $('#stepsOk').onclick = () => {
     const v = parseInt(String($('#stepsIn').value).replace(/\s/g, ''), 10);
     if (!(v >= 0 && v <= 100000)) { toast('Впиши шаги числом, например 8500'); return; }
     const pv = S.food.steps; S.food.steps = v; notify(); save();
     toast(`Шаги: ${v.toLocaleString('ru')}`, () => { S.food.steps = pv; save(); });
   };
-  const ao = $('#actOpen'); if (ao) ao.onclick = () => { S.actOpen = true; haptic(); renderFood(); };
-  $$('[data-act-t]').forEach(b => b.onclick = () => { S.actPick = S.actPick === b.dataset.actT ? null : b.dataset.actT; haptic(); renderFood(); });
+  const re = () => { const y = scrollY; render(); scrollTo(0, y); };
+  const ao = $('#actOpen'); if (ao) ao.onclick = () => { S.actOpen = true; haptic(); re(); };
+  $$('[data-act-t]').forEach(b => b.onclick = () => { S.actPick = S.actPick === b.dataset.actT ? null : b.dataset.actT; haptic(); re(); });
   const add = min => {
     if (!(min >= 1 && min <= 600)) { toast('От 1 до 600 минут'); return; }
     S.food.act = (S.food.act || []).concat({ t: S.actPick, min }); const n = ACTS[S.actPick].n; S.actPick = null; S.actOpen = false; notify(); save();
@@ -1536,9 +1550,9 @@ function showAch() {
 }
 function achHTML() {
   const list = achievements(), got = list.filter(a => S.ach.includes(a.id) || a.ok), hid = list.length - got.length;
-  return `<h3>Достижения · ${got.length} из ${list.length}</h3><div class="achgrid">${got.map(a => `<div class="achtile on"><b>${esc(a.t)}</b><span>${esc(a.d)}</span></div>`).join('')}
+  return sec('ach', 'Достижения', `${got.length} / ${list.length}`, `<div class="achgrid">${got.map(a => `<div class="achtile on"><b>${esc(a.t)}</b><span>${esc(a.d)}</span></div>`).join('')}
     ${Array(hid).fill('<div class="achtile"><b>?</b><span>скрыто</span></div>').join('')}</div>
-    ${hid ? `<p class="muted small">${hid} ${plural(hid, 'достижение скрыто', 'достижения скрыты', 'достижений скрыто')}. Узнаешь, когда получишь.</p>` : ''}`;
+    ${hid ? `<p class="muted small">${hid} ${plural(hid, 'достижение скрыто', 'достижения скрыты', 'достижений скрыто')}. Узнаешь, когда получишь.</p>` : ''}`, false);
 }
 
 /* =================== ПРОФИЛЬ =================== */
@@ -1546,13 +1560,14 @@ function renderProfile() {
   const p = S.profile, n = norms();
   const eq = availableEq(p);
   let h = `<h1>${esc(p.name || 'Профиль')}</h1><p class="sub">${p.sex === 'm' ? 'Мужчина' : 'Женщина'}, ${p.age} ${plural(p.age, 'год', 'года', 'лет')}, ${p.height} см, ${curWeight()} кг</p>
+    <div class="themerow">${Object.entries(THEMES).map(([k, t]) => `<button data-theme="${k}" class="${(S.profile.theme || 'tg') === k ? 'on' : ''}" style="${t.bg ? `--tb:${t.bg};--ta:${t.accent}` : ''}" aria-label="Тема: ${t.n}" title="${t.n}"><i></i></button>`).join('')}<button class="themelink" id="toTheme">Оформление</button></div>
     <h3>Нормы в день</h3>
     <div class="stats"><div><b>${n.kcal}</b><span>ккал</span></div><div><b>${n.protein} г</b><span>белка</span></div><div><b>${n.water} л</b><span>воды</span></div>
     <div><b>${n.fat} г</b><span>жиров</span></div><div><b>${n.carbs} г</b><span>углеводов</span></div><div><b>${levelOf(p) === 1 ? 'новичок' : levelOf(p) === 2 ? 'средний' : 'опытный'}</b><span>уровень</span></div></div>
-    <div class="tip">${n.own ? '<b>Стоят твои цифры.</b> Пустые поля посчитаны по формуле. ' : ''}Как посчитано: базовый обмен по формуле ${n.katch ? `Кетча — МакАрдла (по % жира ${p.bodyFat})` : 'Миффлина — Сан-Жеора'} = <b>${n.bmr} ккал</b> (столько тело тратит в покое). × обычная активность = <b>${n.tdee} ккал</b>. Цель «${GOAL_NAMES[p.goal].toLowerCase()}» → <b>${n.kcal} ккал</b>. ${sportToFood() ? 'Тренировки, шаги и спорт прибавляются к этой норме каждый день отдельно.' : 'Тренировки уже заложены в норму.'} Белок — ${{ gain: 1.8, strength: 1.8, lose: 2, fit: 1.6 }[p.goal]} г на кг веса. Вода — ~33 мл на кг. Нормы пересчитываются, когда записываешь новый вес.</div>
+    ${sec('calc', 'Как посчитано', n.own ? 'свои цифры' : '', `<p class="muted">${n.own ? '<b>Стоят твои цифры.</b> Пустые поля посчитаны по формуле. ' : ''}Базовый обмен по формуле ${n.katch ? `Кетча — МакАрдла (по % жира ${p.bodyFat})` : 'Миффлина — Сан-Жеора'} = <b>${n.bmr} ккал</b> (столько тело тратит в покое). × обычная активность = <b>${n.tdee} ккал</b>. Цель «${GOAL_NAMES[p.goal].toLowerCase()}» → <b>${n.kcal} ккал</b>. ${sportToFood() ? 'Тренировки, шаги и спорт за день вычитаются из съеденного — норма стоит на месте.' : 'Тренировки уже заложены в норму.'} Белок — ${{ gain: 1.8, strength: 1.8, lose: 2, fit: 1.6 }[p.goal]} г на кг веса. Вода — ~33 мл на кг. Нормы пересчитываются, когда записываешь новый вес.</p>`, false)}
     ${normsEditor(p)}
-    <details><summary>Спорт и еда</summary><p class="muted">Сжёг на тренировке или пробежке 300 ккал — норма еды на сегодня вырастет на 300 (при похудении — на половину).</p>
-      <div class="seg" id="s2f"><button data-s2f="1" class="${sportToFood() ? 'on' : ''}">Прибавлять к еде</button><button data-s2f="0" class="${sportToFood() ? '' : 'on'}">Не прибавлять</button></div></details>
+    <details><summary>Спорт и еда</summary><p class="muted">Сжёг на тренировке или пробежке 300 ккал — из съеденного за день вычтется 300 (при похудении — половина).</p>
+      <div class="seg" id="s2f"><button data-s2f="1" class="${sportToFood() ? 'on' : ''}">Вычитать из еды</button><button data-s2f="0" class="${sportToFood() ? '' : 'on'}">Не вычитать</button></div></details>
     ${themeEditor()}
     <h3>Анкета</h3><ul class="list">
       <li><span>Цель</span><em>${GOAL_NAMES[p.goal]}${p.target ? ', ' + p.target + ' кг' : ''}</em></li>
@@ -1570,6 +1585,7 @@ function renderProfile() {
   $('#screen').innerHTML = h;
   $('#edit').onclick = () => startOnboarding(true);
   bindNormsEditor(); bindThemeEditor();
+  $('#toTheme').onclick = () => { const d = $('#themeBox'); d.open = true; S.themeOpen = true; d.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
   $$('[data-s2f]').forEach(b => b.onclick = () => { S.profile.sportToFood = b.dataset.s2f === '1'; Store.set('profile', S.profile); haptic(); renderProfile(); });
   $('#backup').onclick = async () => {
     const keys = [...await Store.keys('w_'), ...await Store.keys('f_'), 'profile', 'program', 'weights', 'meas', 'recent', 'ach'];

@@ -207,8 +207,8 @@ select { border: 0; background: var(--card2); color: var(--text); border-radius:
 details { background: var(--card); border-radius: 18px; padding: 0 16px; margin: 12px 0; }
 summary { list-style: none; padding: 16px 0; font-weight: 700; font-size: 17px; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
 summary::-webkit-details-marker { display: none; }
-summary::after { content: '+'; color: var(--hint); font-weight: 400; font-size: 24px; line-height: 1; }
-details[open] summary::after { content: '−'; }
+summary::after { content: ''; flex: 0 0 8px; width: 8px; height: 8px; margin: 0 4px 4px 12px; border-right: 2px solid var(--hint); border-bottom: 2px solid var(--hint); transform: rotate(45deg); transition: transform .2s; }
+details[open] > summary::after { transform: rotate(-135deg); margin-bottom: -4px; }
 details[open] { padding-bottom: 14px; }
 details .exlist .exrow { background: var(--card2); }
 
@@ -418,6 +418,55 @@ canvas#chart { width: 100%; height: 170px; display: block; margin-top: 12px; }
 .pvcard .figbox { margin-top: 10px; }
 @keyframes pvUp { from { transform: translateY(40px); opacity: .4; } }
 
+/* ===== v5.2 (10.11): минимализм — раскрывающиеся секции, компактный план, спорт вычитается из еды ===== */
+details.sec { background: none; padding: 0; margin: 4px 0; border-radius: 0; border-bottom: 1px solid var(--line); }
+details.sec[open] { padding-bottom: 12px; }
+details.sec > summary { padding: 15px 2px; font-size: 17px; gap: 10px; }
+details.sec .st { flex: 1; min-width: 0; font-weight: 700; display: flex; align-items: baseline; gap: 8px; }
+details.sec .sr { color: var(--hint); font-size: 14px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+details.sec .sb > .exlist, details.sec .achgrid { margin-top: 2px; }
+details.sec .exlist .exrow { background: var(--card); }
+details.sec .act .list li:first-child { border-top: 0; }
+.wd { color: var(--hint); font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; width: 30px; flex: 0 0 30px; }
+.btn.fit { width: auto; margin: 0; }
+.center { text-align: center; }
+
+/* еда: сожжённое «стирает» конец съеденного */
+.bar.burn { position: relative; }
+.bar.burn b { position: absolute; top: 0; bottom: 0; border-radius: 0 5px 5px 0;
+  background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--ok) 70%, transparent) 0 4px, transparent 4px 8px); }
+
+/* план: две недели клетками */
+.wk { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.wkh { text-align: center; font-size: 12px; color: var(--hint); font-weight: 600; }
+.dc { position: relative; aspect-ratio: 1; border-radius: 12px; background: var(--card); display: grid; place-items: center; font-variant-numeric: tabular-nums; }
+.dc b { font-size: 15px; font-weight: 600; }
+.dc.past { color: var(--hint); }
+.dc i { position: absolute; bottom: 5px; left: 50%; width: 5px; height: 5px; margin-left: -2.5px; border-radius: 50%; }
+.dc.plan i { background: var(--accent); }
+.dc.miss i { background: var(--warn); }
+.dc.ok { background: var(--ok); color: #fff; }
+.dc.part { background: linear-gradient(to top, color-mix(in srgb, var(--part) 85%, transparent) var(--p, 50%), var(--card) var(--p, 50%)); color: var(--text); }
+.dc.now { box-shadow: inset 0 0 0 2px var(--accent); }
+.legend i.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); vertical-align: 2px; }
+.prow .pctl { display: flex; gap: 4px; }
+.prow .mini { width: 34px; height: 34px; padding: 0; display: grid; place-items: center; font-size: 15px; }
+.pedit { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.pedit label { font-size: 14px; color: var(--hint); display: flex; align-items: center; gap: 8px; }
+.pedit select { padding: 9px 10px; }
+.pedit .btn { margin: 0; width: auto; }
+
+/* профиль: темы видно сразу */
+.themerow { display: flex; align-items: center; gap: 8px; margin: -4px 0 4px; }
+.themerow button[data-theme] { width: 30px; height: 30px; border-radius: 50%; border: 2px solid var(--line); padding: 0; background: var(--tb, var(--card2)); position: relative; overflow: hidden; }
+.themerow button[data-theme] i { position: absolute; right: 0; bottom: 0; width: 50%; height: 50%; background: var(--ta, var(--accent)); }
+.themerow button.on { border-color: var(--text); }
+.themelink { border: 0; background: none; color: var(--accent); font-weight: 600; font-size: 15px; margin-left: auto; padding: 6px 0; }
+
 /* экран упражнения: ссылки рядом */
 .exlinks { display: flex; justify-content: center; gap: 22px; flex-wrap: wrap; margin-top: 6px; }
 @media (prefers-reduced-motion: reduce) { .achpop.show .achcard, .achpop.show .medal, .achpop.show .star { animation: none; } }
+.exrow { padding: 11px 12px 11px 10px; gap: 12px; border-radius: 16px; }
+.exrow .num { flex-basis: 30px; height: 30px; font-size: 14px; }
+.exrow b { font-size: 16px; }
+.exlist { gap: 6px; }
