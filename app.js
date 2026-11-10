@@ -822,27 +822,69 @@ function renderPlan() {
 }
 const saveProgram = () => { renameAll(); Store.set('program', S.program); };
 
+// Выбор упражнения: поиск по названию и мышцам, «глаз» — предпросмотр (человечек, шаги, видео), «+» — выбрать.
+const norm = t => String(t).toLowerCase().replace(/ё/g, 'е');
 function openPicker(title, pat, exclude, onPick, prof, onClose) {
   const p = prof || S.profile;
-  const pats = pat ? [pat] : Object.keys(PATTERNS);
-  let h = `<div class="head"><button class="back" id="pback">←</button><h2>${esc(title)}</h2></div>
-    <p class="muted">${pat ? 'Похожие упражнения, которые подходят под твой инвентарь и уровень.' : 'Все упражнения под твой инвентарь и уровень.'}</p>
-    ${pat ? '<button class="btn ghost sm" id="pall">Показать все, не только похожие</button>' : ''}`;
+  const pats = Object.keys(PATTERNS);
+  let h = `<div class="exhead"><button class="back" id="pback" aria-label="Назад">←</button><div><small>${pat ? 'Похожие под твой инвентарь' : 'Все упражнения'}</small><h2>${esc(title)}</h2></div></div>
+    <div class="psearch"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+      <input id="psearch" type="search" placeholder="Поиск: становая, присед, пресс…" autocomplete="off" enterkeyhint="search"></div>
+    <p class="muted small" id="pnone" hidden>Ничего не нашла. Попробуй другое слово: «тяга», «спина», «гантели».</p>`;
   for (const pt of pats) {
-    const ok = Object.keys(LIB).filter(id => LIB[id].pat === pt && !exclude.includes(id) && fits(LIB[id], p));
-    const other = pat ? Object.keys(LIB).filter(id => LIB[id].pat === pt && !exclude.includes(id) && !fits(LIB[id], p)) : [];
-    if (!ok.length && !other.length) continue;
-    h += `<h3>${esc(PATTERNS[pt])}</h3>` + ok.map(id => pickRow(id, '')).join('') +
-      (other.length ? `<p class="muted">Нужен другой инвентарь или уровень:</p>` + other.map(id => pickRow(id, needs(LIB[id], p))).join('') : '');
+    const ids = Object.keys(LIB).filter(id => LIB[id].pat === pt && !exclude.includes(id));
+    if (!ids.length) continue;
+    const ok = ids.filter(id => fits(LIB[id], p)), other = ids.filter(id => !fits(LIB[id], p));
+    const near = !pat || pt === pat; // в режиме «заменить» сначала видно только похожие; поиск ищет по всем
+    h += `<section class="pgroup" data-near="${near ? 1 : 0}" ${near ? '' : 'hidden'}><h3>${esc(PATTERNS[pt])}</h3>` + ok.map(id => pickRow(id, '', true)).join('') +
+      other.map(id => pickRow(id, needs(LIB[id], p), false)).join('') + `</section>`;
   }
-  const sh = $('#sheet'); sh.innerHTML = h; sh.hidden = false; sh.scrollTop = 0;
+  if (pat) h += `<button class="btn ghost sm" id="pall">Показать все упражнения</button>`;
+  const sh = $('#sheet'); sh.innerHTML = h; sh.hidden = false; sh.scrollTop = 0; sh.dataset.ex = '';
   const close = () => { sh.hidden = true; setBack(null); };
   const back = () => { close(); if (onClose) onClose(); };
   $('#pback').onclick = back; setBack(back);
-  const pa = $('#pall'); if (pa) pa.onclick = () => openPicker(title, null, exclude, onPick, prof, onClose);
+  let showAll = !pat;
+  const filter = () => {
+    const q = norm($('#psearch').value.trim());
+    let any = false;
+    $$('.pgroup', sh).forEach(g => {
+      let vis = 0;
+      $$('.pick', g).forEach(r => { const hit = q ? r.dataset.s.includes(q) : (r.dataset.fit === '1' || pat); r.hidden = !hit; if (hit) vis++; });
+      g.hidden = !vis || (!q && !showAll && g.dataset.near !== '1'); if (!g.hidden) any = true;
+    });
+    $('#pnone').hidden = any;
+    const pa = $('#pall'); if (pa) pa.hidden = !!q || showAll;
+  };
+  $('#psearch').oninput = filter; filter();
+  const pa = $('#pall'); if (pa) pa.onclick = () => { showAll = true; filter(); };
   $$('[data-pick]', sh).forEach(b => b.onclick = () => { close(); onPick(b.dataset.pick); notify(); });
+  $$('[data-prev]', sh).forEach(b => b.onclick = () => previewEx(b.dataset.prev, id => { close(); onPick(id); notify(); }));
 }
-const pickRow = (id, note) => `<button class="ex" data-pick="${id}"><div class="n"><b>${esc(LIB[id].name)}</b><span>${esc(LIB[id].mus)}${note ? ' · ' + esc(note) : ''}</span></div><div class="prog">+</div></button>`;
+const pickRow = (id, note, fit) => { const e = LIB[id];
+  return `<div class="pick ${fit ? '' : 'nofit'}" data-fit="${fit ? 1 : 0}" data-s="${esc(norm(e.name + ' ' + e.mus + ' ' + (PATTERNS[e.pat] || '') + ' ' + e.eq.map(x => EQUIP[x] || '').join(' ')))}">
+    <button class="pinfo" data-prev="${id}"><b>${esc(e.name)}</b><span>${esc(e.mus)}${note ? ' · ' + esc(note) : ''}</span></button>
+    <button class="peye" data-prev="${id}" aria-label="Посмотреть"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button class="padd" data-pick="${id}" aria-label="Выбрать">+</button></div>`; };
+// Предпросмотр: как выглядит упражнение, шаги и видео — до того, как добавить.
+function previewEx(id, onPick) {
+  const e = E(id) || LIB[id];
+  let el = $('#pv'); if (!el) { el = document.createElement('div'); el.id = 'pv'; el.className = 'pv'; document.body.appendChild(el); }
+  el.innerHTML = `<div class="pvcard"><div class="row"><h2>${esc(e.name)}</h2><button class="back" id="pvx" aria-label="Закрыть">×</button></div>
+    <div class="figbox" id="pvfig"></div>
+    <div class="meta"><span>${esc(e.mus)}</span>${e.eq.length ? `<span>${e.eq.map(x => esc(EQUIP[x] || x)).join(', ')}</span>` : '<span>без инвентаря</span>'}<span>${setsOf(e) > 1 ? setsOf(e) + ' × ' : ''}${range(e)}${e.type === 'reps' ? ' повт.' : ''}</span></div>
+    <ol class="steps">${(e.steps || []).map(s => `<li>${esc(s)}</li>`).join('')}</ol>
+    <div class="exbtns"><button class="btn ghost" id="pvvid">Видео техники</button><button class="btn" id="pvok">Выбрать</button></div></div>`;
+  el.hidden = false;
+  if (window.Figure) Figure.mount($('#pvfig'), id, e.eq.includes('bb') ? 'bb' : e.eq.includes('db') ? 'db' : e.eq.includes('kb') ? 'kb' : null);
+  const prevBack = backFn;
+  const shut = () => { if (window.Figure) Figure.stop(); el.hidden = true; setBack(prevBack); };
+  setBack(shut);
+  $('#pvx').onclick = shut;
+  el.onclick = ev => { if (ev.target === el) shut(); };
+  $('#pvvid').onclick = () => openLink('https://www.youtube.com/results?search_query=' + encodeURIComponent(e.video || e.name + ' техника'));
+  $('#pvok').onclick = () => { shut(); onPick(id); };
+}
 const needs = (e, prof) => {
   const p = prof || S.profile, have = availableEq(p), miss = e.eq.filter(x => !have.includes(x));
   return [miss.length ? 'нужно: ' + miss.map(x => EQUIP[x].toLowerCase()).join(', ') : '',

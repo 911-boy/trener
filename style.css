@@ -396,6 +396,28 @@ canvas#chart { width: 100%; height: 170px; display: block; margin-top: 12px; }
 @keyframes medal { 0% { transform: rotate(-14deg) translateY(-30px); opacity: 0; } 45% { transform: rotate(8deg); opacity: 1; } 70% { transform: rotate(-4deg); } 100% { transform: rotate(0); } }
 @keyframes shine { 0% { transform: scale(.4) rotate(-40deg); } 70% { transform: scale(1.15) rotate(6deg); } 100% { transform: scale(1); } }
 
+/* выбор упражнения: поиск, строка = название · глаз · плюс (10.11, после скрина Влада: строки были белыми и по центру) */
+.psearch { position: sticky; top: -14px; z-index: 2; display: flex; align-items: center; gap: 10px; background: var(--card2); border-radius: 14px; padding: 0 14px; margin: 6px 0 4px; color: var(--hint);
+  box-shadow: 0 6px 12px -6px var(--bg); }
+.psearch input { flex: 1; min-width: 0; border: 0; background: none; padding: 15px 0; font-size: 17px; color: var(--text); -webkit-appearance: none; appearance: none; }
+.psearch input:focus { outline: none; }
+.pgroup h3 { margin-top: 22px; }
+.pick { display: flex; align-items: center; gap: 6px; background: var(--card); border-radius: 16px; margin-bottom: 8px; padding: 4px 6px 4px 0; }
+.pick.nofit { opacity: .6; }
+.pinfo { flex: 1; min-width: 0; text-align: left; border: 0; background: none; padding: 12px 6px 12px 14px; color: var(--text); }
+.pinfo b { display: block; font-weight: 650; font-size: 16px; line-height: 1.3; }
+.pinfo span { display: block; font-size: 13.5px; color: var(--hint); margin-top: 2px; }
+.peye, .padd { flex: 0 0 44px; height: 44px; border: 0; border-radius: 12px; display: grid; place-items: center; }
+.peye { background: none; color: var(--hint); }
+.padd { background: var(--accent); color: var(--accent-text); font-size: 26px; line-height: 1; }
+.ex { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 0; background: var(--card); color: var(--text); border-radius: 16px; padding: 12px 14px; margin-bottom: 8px; }
+.ex .n { flex: 1; min-width: 0; } .ex .n b { display: block; } .ex .n span { font-size: 14px; color: var(--hint); }
+.pv { position: fixed; inset: 0; z-index: 60; background: color-mix(in srgb, #000 55%, transparent); display: flex; align-items: flex-end; }
+.pvcard { background: var(--bg); width: 100%; max-height: 88vh; overflow-y: auto; border-radius: 24px 24px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); animation: pvUp .25s ease-out; }
+.pvcard .row h2 { font-size: 22px; }
+.pvcard .figbox { margin-top: 10px; }
+@keyframes pvUp { from { transform: translateY(40px); opacity: .4; } }
+
 /* экран упражнения: ссылки рядом */
 .exlinks { display: flex; justify-content: center; gap: 22px; flex-wrap: wrap; margin-top: 6px; }
 @media (prefers-reduced-motion: reduce) { .achpop.show .achcard, .achpop.show .medal, .achpop.show .star { animation: none; } }

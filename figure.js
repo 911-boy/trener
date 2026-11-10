@@ -63,7 +63,7 @@
     cableRow: 'seatrow', bandRow: 'seatrow', pushupKnee: 'kneepush', fingerPush: 'kneepush', pushup: 'pushup', diamond: 'pushup',
     pushupFeet: 'feetpush', dips: 'dips', dbBench: 'bench', bench: 'bench', pike: 'pike', dbOhp: 'press', ohp: 'press', kbPress: 'press',
     bandPress: 'press', squat: 'squat', goblet: 'goblet', kbGoblet: 'goblet', bbSquat: 'bbsquat', legPress: 'legpress', bulgarian: 'bulgarian',
-    rdl: 'rdl', dbRdl: 'rdl', kbSwing: 'swing', slRdl: 'slrdl', hipThrust: 'bridge', bridge: 'bridge', lunge: 'lunge', dbLunge: 'lunge',
+    rdl: 'rdl', dbRdl: 'rdl', deadlift: 'rdl', dbDeadlift: 'rdl', kbSwing: 'swing', slRdl: 'slrdl', hipThrust: 'bridge', bridge: 'bridge', lunge: 'lunge', dbLunge: 'lunge',
     stepUp: 'stepup', calf: 'calf', plank: 'plank', sidePlank: 'plank', legRaise: 'legraise', lyingRaise: 'lyingraise', crunch: 'crunch',
     hammer: 'curl', curl: 'curl', bbCurl: 'curl', bandCurl: 'curl', chairDips: 'chairdips', dbExt: 'ext', pushdown: 'pushdown',
     lateral: 'lateral', bandLateral: 'lateral', hang: 'hang', wrist: 'wrist', wristExt: 'wrist', farmer: 'farmer', towelWring: 'wring',
