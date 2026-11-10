@@ -91,7 +91,7 @@ const S = {
 async function load() {
   const [profile, program, f, weights, meas, rec, ach] = await Promise.all(
     ['profile', 'program', 'f_' + S.today, 'weights', 'meas', 'recent', 'ach'].map(k => Store.get(k)));
-  S.profile = profile; S.program = program;
+  S.profile = profile; S.program = program; applyTheme();
   if (S.program && (S.program.v || 0) < 4) { S.program.adj = S.program.adj || {}; S.program.v = 4; renameAll(); Store.set('program', S.program); } // старая версия плана
   S.food = f || { date: S.today, items: [], water: 0 };
   S.weights = weights || []; S.meas = meas || []; S.ach = ach || [];
@@ -104,7 +104,7 @@ async function load() {
   if (!S.profile || !S.program) return startOnboarding();
   render();
 }
-const saveWorkout = () => Store.set('w_' + S.today, S.workout);
+const saveWorkout = () => { if (S.program && isTrained(S.workout)) S.workout.pct = Math.round(completion({ ...S.workout, pct: null }) * 100) / 100; Store.set('w_' + S.today, S.workout); };
 const saveFood = () => Store.set('f_' + S.today, S.food);
 
 // Открыли приложение после полуночи — начинаем новый день.
@@ -112,19 +112,52 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && da
 
 /* ---------- нормы по анкете ---------- */
 const curWeight = () => (S.weights.length ? S.weights[S.weights.length - 1].w : S.profile.weight);
+// Нормы: свои цифры человека важнее формулы. Знает % жира — точнее формула Кетча — МакАрдла (по сухой массе).
+// Если спорт прибавляется к еде (по умолчанию), в базовой норме тренировки не учитываем — иначе посчитаем дважды.
+const sportToFood = (p = S.profile) => p.sportToFood !== false;
 function norms(p = S.profile, w = null) {
   w = w || (p === S.profile ? curWeight() : p.weight);
-  const bmr = 10 * w + 6.25 * p.height - 5 * p.age + (p.sex === 'm' ? 5 : -161);
-  const act = { low: 1.35, mid: 1.5, high: 1.7 }[p.activity] + Math.min(5, p.days.length) * 0.025;
+  const bf = +p.bodyFat;
+  const bmr = bf >= 3 && bf <= 60 ? 370 + 21.6 * w * (1 - bf / 100) : 10 * w + 6.25 * p.height - 5 * p.age + (p.sex === 'm' ? 5 : -161);
+  const act = { low: 1.35, mid: 1.5, high: 1.7 }[p.activity] + (sportToFood(p) ? 0 : Math.min(5, p.days.length) * 0.025);
   const tdee = bmr * act;
   const mult = { gain: 1.12, lose: 0.82, fit: 1, strength: 1.05 }[p.goal];
-  const kcal = Math.round(Math.max(bmr * 1.1, tdee * mult) / 50) * 50;
-  const protein = Math.round(w * { gain: 1.8, strength: 1.8, lose: 2.0, fit: 1.6 }[p.goal] / 5) * 5;
+  const c = p.custom || {};
+  const kcal = c.kcal || Math.round(Math.max(bmr * 1.1, tdee * mult) / 50) * 50;
+  const protein = c.protein || Math.round(w * { gain: 1.8, strength: 1.8, lose: 2.0, fit: 1.6 }[p.goal] / 5) * 5;
   const waterMl = Math.round((w * 33 + 300) / 50) * 50; // 33 мл на кг + запас на тренировки
   const water = r1(waterMl / 1000); // литры
-  const fat = Math.round(w * (p.goal === 'lose' ? 0.8 : 0.9));
-  const carbs = Math.max(50, Math.round((kcal - protein * 4 - fat * 9) / 4));
-  return { bmr: Math.round(bmr), tdee: Math.round(tdee), kcal, protein, fat, carbs, water, waterMl };
+  const fat = c.fat || Math.round(w * (p.goal === 'lose' ? 0.8 : 0.9));
+  const carbs = c.carbs || Math.max(50, Math.round((kcal - protein * 4 - fat * 9) / 4));
+  return { bmr: Math.round(bmr), tdee: Math.round(tdee), kcal, protein, fat, carbs, water, waterMl, own: !!(c.kcal || c.protein || c.fat || c.carbs), katch: bf >= 3 && bf <= 60 };
+}
+
+/* ---------- активность за день → прибавка к еде ---------- */
+// Чистый расход сверх покоя: (MET − 1) × 3,5 × вес / 200 ккал в минуту (Compendium 2024). Покой уже сидит в базовой норме.
+const ACTS = {
+  run: { n: 'Бег', met: 9.0 }, bike: { n: 'Велосипед', met: 6.8 }, gym: { n: 'Силовая (без приложения)', met: 5.0 },
+  walk: { n: 'Быстрая ходьба', met: 4.3 }, swim: { n: 'Плавание', met: 6.0 }, ball: { n: 'Футбол, игры', met: 7.0 },
+  yoga: { n: 'Йога, растяжка', met: 2.5 }, house: { n: 'Дела по дому', met: 3.3 },
+};
+const STEP_BASE = { low: 4000, mid: 7000, high: 10000 }; // столько шагов уже заложено в «обычный день» анкеты
+const actKcal = (t, min) => Math.round((ACTS[t].met - 1) * 3.5 * curWeight() / 200 * min);
+function stepsKcal(steps) {
+  const extra = Math.max(0, steps - STEP_BASE[S.profile.activity]);
+  const strideKm = (S.profile.height || 175) * 0.415 / 100000;
+  return { extra, k: Math.round(extra * strideKm * 0.5 * curWeight()) }; // ходьба ≈ 0,5 ккал на кг на км сверх покоя
+}
+function trainKcal() { return Math.round(Object.entries(S.workout.sets || {}).reduce((s, [id, v]) => s + (LIB[id] ? kcalOf(id, v.filter(x => x != null)) : 0), 0)); }
+function dayActivity() {
+  const tr = trainKcal(), st = stepsKcal(S.food.steps || 0);
+  const acts = (S.food.act || []).map(a => ({ ...a, k: ACTS[a.t] ? actKcal(a.t, a.min) : 0 }));
+  const total = tr + st.k + acts.reduce((s, a) => s + a.k, 0);
+  const share = S.profile.goal === 'lose' ? 0.5 : 1; // при похудении возвращаем в еду половину — запас на неточность
+  return { tr, steps: S.food.steps || 0, st, acts, total, share, bonus: sportToFood() ? Math.round(total * share / 10) * 10 : 0 };
+}
+// Нормы на сегодня = база + заработанное спортом (прибавка идёт в углеводы).
+function todayNorms() {
+  const G = norms(), A = dayActivity();
+  return { ...G, base: G.kcal, kcal: G.kcal + A.bonus, carbs: G.carbs + Math.round(A.bonus / 4), A };
 }
 const GOAL_NAMES = { gain: 'Набрать мышцы', lose: 'Похудеть', fit: 'Быть в форме', strength: 'Стать сильнее' };
 const ACT_NAMES = { low: 'Сидячая (учёба, офис)', mid: 'Средняя (хожу пешком, бываю на ногах)', high: 'Высокая (физическая работа, много движения)' };
@@ -169,12 +202,29 @@ function buildProgram(p) {
   return { v: 4, created: S.today, workouts, adj: {} };
 }
 const W = id => S.program.workouts.find(w => w.id === id);
-const plannedFor = d => S.program.workouts.find(w => w.weekday === d.getDay()) || null;
+// Пересборка плана по анкете не трогает свои тренировки человека.
+const keepCustom = prog => { if (S.program) prog.workouts.push(...S.program.workouts.filter(w => w.custom)); return prog; };
+const dayLabel = w => w.weekday == null ? 'любой день' : WD[w.weekday];
+// Своя тренировка с назначенным днём важнее обычной на этот день.
+const plannedFor = d => S.program.workouts.filter(w => w.weekday === d.getDay()).sort((a, b) => (b.custom ? 1 : 0) - (a.custom ? 1 : 0))[0] || null;
 
 /* ---------- история и статистика ---------- */
 const doneVals = (w, id) => ((w.sets || {})[id] || []).filter(v => v != null);
 const isTrained = w => w && Object.values(w.sets || {}).some(a => a.some(v => v != null));
 const trainedDates = () => Object.keys(S.history).filter(d => isTrained(S.history[d])).sort();
+// Насколько тренировка сделана: доля выполненных подходов основных упражнений (без разминки и растяжки), 0…1.
+// Сохраняется в записи дня (pct), чтобы не зависеть от будущих правок плана; у старых записей считаем по плану.
+const MAIN = list => list.filter(id => LIB[id] && !['warmup', 'stretch'].includes(id));
+function completion(w) {
+  if (!isTrained(w)) return 0;
+  if (w.pct != null && w.date !== S.today) return w.pct;
+  const pw = w.wid && S.program && W(w.wid);
+  const list = pw ? MAIN(pw.list) : MAIN(Object.keys(w.sets || {}));
+  if (!list.length) return 1;
+  return Math.min(1, list.reduce((s, id) => s + Math.min(1, doneVals(w, id).length / setsOf(E(id))), 0) / list.length);
+}
+const isFull = w => completion(w) >= 0.85; // 85 % подходов и больше — полная
+const fullDates = () => trainedDates().filter(d => isFull(S.history[d]));
 function exStats(id) {
   let sessions = 0, total = 0, best = 0, last = null, bestKg = 0;
   for (const d of Object.keys(S.history).sort()) {
@@ -190,7 +240,7 @@ function exStats(id) {
 function nextInOrder() {
   const ds = trainedDates().filter(d => d !== S.today);
   const lastW = ds.length ? S.history[ds[ds.length - 1]].wid : null;
-  const ws = S.program.workouts, i = ws.findIndex(w => w.id === lastW);
+  const ws = S.program.workouts.filter(w => !w.custom), i = ws.findIndex(w => w.id === lastW);
   return ws[(i + 1) % ws.length];
 }
 const unit = e => e.type === 'time' ? ' с' : '';
@@ -246,7 +296,7 @@ function focusOf(list) {
   const s = top.join(', ') || 'тренировка';
   return s[0].toUpperCase() + s.slice(1);
 }
-function renameAll() { if (S.program) S.program.workouts.forEach(w => { w.name = focusOf(w.list); }); }
+function renameAll() { if (S.program) S.program.workouts.forEach(w => { w.name = w.custom && w.cname ? w.cname : focusOf(w.list); }); }
 // Расход калорий по MET (Compendium 2024): ккал/мин = MET × 3,5 × вес / 200.
 function metOf(e) {
   if (e.pat === 'stretch') return 2.3; if (e.pat === 'warmup') return 3.5;
@@ -257,7 +307,7 @@ function metOf(e) {
 }
 function kcalOf(id, doneVals) {
   const e = E(id); if (!e) return 0;
-  const w = curWeight(), perMin = met => met * 3.5 * w / 200;
+  const w = curWeight(), perMin = met => (met - 1) * 3.5 * w / 200; // чистый расход сверх покоя (покой уже в базовой норме)
   const vals = doneVals || Array(e.sets).fill(Math.round((e.lo + e.hi) / 2));
   const work = vals.reduce((s, v) => s + (e.type === 'time' ? v : v * 3.2 * (e.side ? 2 : 1)), 0) / 60;
   const rest = Math.max(0, vals.length - 1) * e.rest / 60;
@@ -362,7 +412,7 @@ function drawStep() {
     const p = { ...D }; delete p._edit;
     if (!p.created) p.created = S.today;
     S.profile = p; Store.set('profile', p);
-    S.program = buildProgram(p); Store.set('program', S.program);
+    S.program = keepCustom(buildProgram(p)); Store.set('program', S.program);
     if (!S.weights.length) { S.weights = [{ d: S.today, w: p.weight }]; Store.set('weights', S.weights); }
     S.workout.wid = null; setBack(null); notify();
     S.tab = 'today'; $$('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === 'today'));
@@ -381,15 +431,16 @@ function renderToday() {
   const planned = plannedFor(d);
   const started = isTrained(S.workout);
   if (S.workout.wid && !W(S.workout.wid)) S.workout.wid = null; // тренировку удалили из плана
-  let h = `<h1>${WDF[d.getDay()]}, ${d.getDate()}.${pad(d.getMonth() + 1)}</h1>`;
+  let h = `<h1>${WDF[d.getDay()]}, ${d.getDate()}.${pad(d.getMonth() + 1)}</h1>` + dayStrip();
 
   if (S.choosing) {
     h += `<p class="sub">Какую тренировку делаем сегодня?</p>` + S.program.workouts.map(w =>
-      `<button class="wcard pick" data-w="${w.id}"><b>${esc(w.name)}${w.id === (planned && planned.id) ? ' <span class="tag">по плану</span>' : ''}</b><span>${WD[w.weekday]} · ${w.list.length - 2} упражнений · ~${workoutMin(w.list)} мин</span></button>`).join('') +
-      `<button class="btn ghost" id="chCancel">Отмена</button>`;
+      `<button class="wcard pick" data-w="${w.id}"><b>${esc(w.name)}${w.id === (planned && planned.id) ? ' <span class="tag">по плану</span>' : ''}${w.custom ? ' <span class="tag">своя</span>' : ''}</b><span>${dayLabel(w)} · ${MAIN(w.list).length} упражнений · ~${workoutMin(w.list)} мин</span></button>`).join('') +
+      `<button class="btn" id="chBuild">Собрать свою тренировку</button><button class="btn ghost" id="chCancel">Отмена</button>`;
     $('#screen').innerHTML = h;
     $$('[data-w]').forEach(b => b.onclick = () => { S.workout.wid = b.dataset.w; S.choosing = false; S.anyway = true; saveWorkout(); haptic(); renderToday(); });
     $('#chCancel').onclick = () => { S.choosing = false; renderToday(); };
+    $('#chBuild').onclick = () => { S.choosing = false; openBuilder(); };
     setBack(() => { S.choosing = false; setBack(null); renderToday(); });
     return;
   }
@@ -402,6 +453,7 @@ function renderToday() {
     $('#screen').innerHTML = h;
     $('#startNow').onclick = () => { S.workout.wid = (nx ? nx.w : S.program.workouts[0]).id; S.anyway = true; haptic(); renderToday(); };
     $('#waitFirst').onclick = () => { S.waitFirst = true; renderToday(); };
+    bindStrip();
     return;
   }
   if (!S.workout.wid && !planned && !S.anyway && !started) {
@@ -411,6 +463,7 @@ function renderToday() {
       <button class="btn ghost" id="anyway">Всё равно потренироваться</button>`;
     $('#screen').innerHTML = h;
     $('#anyway').onclick = () => { S.choosing = true; renderToday(); };
+    bindStrip();
     return;
   }
   const w = W(S.workout.wid) || planned || nextInOrder();
@@ -418,15 +471,16 @@ function renderToday() {
   const core = w.list.filter(id => LIB[id]);
   const done = core.filter(id => setsDone(id) >= setsOf(E(id))).length;
   const nextId = core.find(id => setsDone(id) < setsOf(E(id)));
-  const idx = S.program.workouts.indexOf(w) + 1, burned = Math.round(Object.entries(S.workout.sets).reduce((s, [id, v]) => s + (LIB[id] ? kcalOf(id, v.filter(x => x != null)) : 0), 0));
+  const regular = S.program.workouts.filter(x => !x.custom), idx = regular.indexOf(w) + 1, burned = trainKcal();
 
   h += `<div class="hero">
-    <span class="hero-k">Тренировка ${idx} из ${S.program.workouts.length}${planned && planned.id === w.id ? ' · по плану' : ''}</span>
+    <span class="hero-k">${w.custom ? 'Своя тренировка' : `Тренировка ${idx} из ${regular.length}`}${planned && planned.id === w.id ? ' · по плану' : ''}</span>
     <h2>${esc(w.name)}</h2>
     <div class="hero-meta"><span>${core.length - 2} упражнений</span><span>~${workoutMin(core)} мин</span><span>≈ ${workoutKcal(core)} ккал</span></div>
     ${started ? `<div class="bar"><i style="width:${done / core.length * 100}%"></i></div>
-      <div class="hero-sub">Сделано ${done} из ${core.length} · сожжено ≈ ${burned} ккал${S.workout.start && !S.workout.finished ? ` · <span id="clock">${mins(S.workout.start)}</span>` : ''}</div>` : ''}
-    ${S.workout.finished ? `<div class="hero-done">Тренировка завершена${S.workout.start && S.workout.end ? ` · ${Math.max(1, Math.round((S.workout.end - S.workout.start) / 60000))} мин` : ''}</div>`
+      <div class="hero-sub">Сделано ${done} из ${core.length} · сожжено ≈ ${burned} ккал${sportToFood() ? ' → в еду' : ''}${S.workout.start && !S.workout.finished ? ` · <span id="clock">${mins(S.workout.start)}</span>` : ''}</div>` : ''}
+    ${S.workout.finished ? `<div class="hero-done ${isFull(S.workout) ? '' : 'part'}">${isFull(S.workout) ? 'Тренировка завершена' : `Неполная тренировка · ${Math.round(completion(S.workout) * 100)} %`}${S.workout.start && S.workout.end ? ` · ${Math.max(1, Math.round((S.workout.end - S.workout.start) / 60000))} мин` : ''}</div>
+      ${burned && sportToFood() ? `<div class="hero-sub">+${burned} ккал добавлено к норме еды</div>` : ''}`
       : nextId ? `<button class="btn big" id="go">${started ? `Продолжить: ${esc(LIB[nextId].name)}` : 'Начать тренировку'}</button>`
       : `<button class="btn big" id="toFinish">Завершить тренировку</button>`}
   </div>`;
@@ -444,13 +498,12 @@ function renderToday() {
       <button class="btn" id="finish">Завершить тренировку</button></div>`;
   } else if (S.workout.finished) {
     if (S.workout.feel != null || S.workout.note) h += `<div class="card">${S.workout.feel != null ? 'Далось: ' + FEEL[S.workout.feel].toLowerCase() + '. ' : ''}${esc(S.workout.note || '')}</div>`;
-    const fresh = newAchievements();
-    if (fresh.length) h += `<div class="tip"><b>Новое достижение:</b> ${fresh.map(a => esc(a.t)).join(', ')}</div>`;
   }
   if (!S.workout.finished) h += `<button class="btn ghost" id="choose">Сделать другую тренировку</button>`;
   $('#screen').innerHTML = h;
 
   $$('.exrow').forEach(b => b.onclick = () => openExercise(b.dataset.id));
+  bindStrip();
   const go = $('#go'); if (go) go.onclick = () => openExercise(nextId);
   const tf = $('#toFinish'); if (tf) tf.onclick = () => $('#finishBox') && $('#finishBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
   const ch = $('#choose'); if (ch) ch.onclick = () => { S.choosing = true; renderToday(); scrollTo(0, 0); };
@@ -459,10 +512,20 @@ function renderToday() {
   const f = $('#finish'); if (f) f.onclick = () => {
     if (note) S.workout.note = note.value.trim().slice(0, 300);
     S.workout.finished = true; S.workout.end = Date.now(); S.workout.name = w.name; saveWorkout(); notify(); renderToday(); scrollTo(0, 0);
+    if (!isFull(S.workout)) toast(`Записала как неполную (${Math.round(completion(S.workout) * 100)} %). В прогрессе она будет отмечена отдельно.`);
+    checkAch();
   };
   clearInterval(clockIv);
   if (S.workout.start && !S.workout.finished) clockIv = setInterval(() => { const c = $('#clock'); if (c) c.textContent = mins(S.workout.start); else clearInterval(clockIv); }, 15000);
 }
+// Сводка дня одной строкой: сколько съел из нормы (с учётом спорта), вода, шаги. Нажал — открылась «Еда».
+function dayStrip() {
+  if (S.choosing) return '';
+  const G = todayNorms(), k = Math.round(S.food.items.reduce((s, x) => s + (+x.k || 0), 0)), wml = S.food.waterMl ?? (S.food.water || 0) * 250;
+  const cell = (v, of, n, cls) => `<button class="dcell ${cls}" data-go="food"><b>${v}</b><span>${of}</span><i style="--v:${n}%"></i><em>${cls === 'k' ? 'еда' : cls === 'w' ? 'вода' : 'активность'}</em></button>`;
+  return `<div class="daystrip">${cell(k, '/ ' + G.kcal, Math.min(100, k / G.kcal * 100), 'k')}${cell(r1(wml / 1000), '/ ' + G.water + ' л', Math.min(100, wml / G.waterMl * 100), 'w')}${cell('+' + G.A.total, 'ккал', G.A.total ? 100 : 0, 'a')}</div>`;
+}
+function bindStrip() { $$('[data-go]').forEach(b => b.onclick = () => { S.tab = b.dataset.go; $$('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === S.tab)); haptic(); render(); scrollTo(0, 0); }); }
 function rowHTML(id, i) {
   const e = E(id), n = setsDone(id), ok = n >= setsOf(e);
   return `<button class="exrow ${ok ? 'done' : n ? 'part' : ''}" data-id="${id}">
@@ -560,7 +623,7 @@ function openExercise(id) {
   if (!service) h += `<details><summary>Подсказки</summary><p class="muted">Последние 1–3 повтора должны идти тяжело, но с чистой техникой — до отказа не нужно.${levelOf(S.profile) === 1 ? ' Первые 2 недели вес лёгкий: учим технику.' : ''}</p>
       ${wtd && WARMUP_PATS.includes(e.pat) && e.eq.some(x => ['bb', 'gym'].includes(x)) ? '<p class="muted">Перед первым подходом — разминочный: половина веса × 10 (не записывай).</p>' : ''}
       ${st.sessions ? `<p class="muted">Всего: ${st.sessions} ${plural(st.sessions, 'тренировка', 'тренировки', 'тренировок')}, рекорд ${st.bestKg ? st.bestKg + ' кг' : st.best + unit(e)}.</p>` : ''}</details>
-      <button class="link center" id="tooHard">Слишком тяжело?</button><div id="hardBox"></div>`;
+      <div class="exlinks"><button class="link" id="tooHard">Слишком тяжело?</button><button class="link" id="swapEx">Заменить упражнение</button></div><div id="hardBox"></div>`;
   const primary = cur >= 0 ? `Готово · подход ${cur + 1}` : nextEx ? `Дальше: ${LIB[nextEx].name} →` : 'Закончить тренировку';
   h += `<div class="actionbar"><button class="btn big" id="primary">${esc(primary)}</button></div>`;
 
@@ -601,7 +664,7 @@ function openExercise(id) {
     vals[cur] = v;
     if (kIn) { const kg = parseFloat(String(kIn.value).replace(',', '.')); kgs[cur] = kg >= 0 && kg < 1000 ? Math.round(kg * 4) / 4 : null; }
     if (!S.workout.start) S.workout.start = Date.now();
-    saveWorkout(); notify();
+    saveWorkout(); notify(); checkAch();
     if (vals.some(x => x == null)) { openExercise(id); if (e.rest) startRest(e.rest); return; }
     const dn = vals.filter(x => x != null), mx = Math.max(...dn);
     if (!service && mx < e.lo && mx > 0) {
@@ -610,6 +673,14 @@ function openExercise(id) {
       toast(`Подстроила цель под тебя: ${lo}–${hi}${unit(e)}. Станет легче — приложение поднимет.`);
     } else toast(nextEx ? 'Упражнение готово! Дальше — ' + LIB[nextEx].name : 'Последнее упражнение готово!');
     openExercise(id);
+  };
+  // Замена прямо с экрана упражнения: в этой тренировке (без «Изменить» в плане). Нет тренажёра, занят, не нравится — поменял.
+  const se = $('#swapEx'); if (se) se.onclick = () => {
+    stopSW(); if (window.Figure) Figure.stop();
+    openPicker(`Заменить «${e.name}»`, LIB[id].pat, w ? w.list : [id], to => {
+      if (w) { const i = w.list.indexOf(id); if (i >= 0) w.list[i] = to; w.extra = (w.extra || []).filter(x => x !== to); saveProgram(); }
+      moveSets(id, to); toast(`Теперь в «${w ? w.name : 'тренировке'}»: ${LIB[to].name}`); openExercise(to);
+    }, null, () => openExercise(id));
   };
   const gh = $('#goHarder'); if (gh) gh.onclick = () => { replaceEverywhere(id, harder); moveSets(id, harder); notify(); toast(`Теперь в плане: ${LIB[harder].name}`); openExercise(harder); };
   const ca = $('#clearAdj'); if (ca) ca.onclick = () => { delete S.program.adj[id]; saveProgram(); notify(); openExercise(id); };
@@ -697,7 +768,7 @@ function openCam(id, e, vals) {
 function renderPlan() {
   const created = (S.profile && S.profile.created) || S.today;
   let h = `<div class="row"><h1>План</h1><button class="btn sm ${S.editPlan ? '' : 'ghost'}" id="editPlan">${S.editPlan ? 'Готово' : 'Изменить'}</button></div>
-    <p class="sub">${S.program.workouts.length} ${plural(S.program.workouts.length, 'тренировка', 'тренировки', 'тренировок')} в неделю.${S.editPlan ? ' Меняй дни, порядок, заменяй и добавляй упражнения.' : ''}</p><h3>Ближайшие 2 недели</h3><ul class="cal">`;
+    <p class="sub">${S.program.workouts.filter(w => w.weekday != null).length} ${plural(S.program.workouts.filter(w => w.weekday != null).length, 'тренировка', 'тренировки', 'тренировок')} в неделю.${S.program.workouts.some(w => w.custom && w.weekday == null) ? ' Свои «на любой день» — ниже.' : ''}${S.editPlan ? ' Меняй дни, порядок, заменяй и добавляй упражнения.' : ''}</p><h3>Ближайшие 2 недели</h3><ul class="cal">`;
   const start = new Date(); start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
   for (let i = 0; i < 14; i++) {
     const d = new Date(start); d.setDate(start.getDate() + i);
@@ -705,25 +776,34 @@ function renderPlan() {
     const w = (trained && rec.wid && W(rec.wid)) || plannedFor(d);
     const past = k < S.today, isToday = k === S.today, counted = k >= created;
     if (!w && !trained && !isToday) continue; // дни отдыха не показываем — меньше шума
-    const cls = trained ? 'ok' : isToday ? 'now' : past && w && counted ? 'miss' : '';
-    h += `<li class="${cls}"><span>${WD[d.getDay()]} ${d.getDate()}</span><b>${w ? esc(w.name) : trained ? 'Тренировка' : '<i>отдых</i>'}</b><em>${trained ? 'сделано' : isToday && w ? 'сегодня' : past && w && counted ? 'пропуск' : ''}</em></li>`;
+    const full = trained && isFull(rec);
+    const cls = full ? 'ok' : trained ? 'part' : isToday ? 'now' : past && w && counted ? 'miss' : '';
+    h += `<li class="${cls}"><span>${WD[d.getDay()]} ${d.getDate()}</span><b>${w ? esc(w.name) : trained ? 'Тренировка' : '<i>отдых</i>'}</b><em>${full ? 'сделано' : trained ? `${isToday && !rec.finished ? 'идёт' : 'неполная'} · ${Math.round(completion(rec) * 100)} %` : isToday && w ? 'сегодня' : past && w && counted ? 'пропуск' : ''}</em></li>`;
   }
   h += `</ul>`;
   S.program.workouts.forEach(w => {
-    h += `<div class="wsec"><div class="wsechd"><b>${esc(w.name)}</b>
-      ${S.editPlan ? `<select data-wd="${w.id}" aria-label="День недели">${WEEK.map(d => `<option value="${d}" ${d === w.weekday ? 'selected' : ''}>${WD[d]}</option>`).join('')}</select>` : `<span class="muted">${WD[w.weekday]}</span>`}</div>
+    h += `<div class="wsec"><div class="wsechd"><b>${esc(w.name)}${w.custom ? ' <span class="tag">своя</span>' : ''}</b>
+      ${S.editPlan ? `<select data-wd="${w.id}" aria-label="День недели">${w.custom ? `<option value="" ${w.weekday == null ? 'selected' : ''}>любой</option>` : ''}${WEEK.map(d => `<option value="${d}" ${d === w.weekday ? 'selected' : ''}>${WD[d]}</option>`).join('')}</select>` : `<span class="muted">${dayLabel(w)}</span>`}</div>
       <p class="muted">${w.list.length - 2} упражнений · ~${workoutMin(w.list)} мин · ≈ ${workoutKcal(w.list)} ккал</p>` +
       w.list.map((id, i) => LIB[id] ? `<div class="prow"><button class="pname" data-open="${id}"><b>${esc(LIB[id].name)}</b><span>${setsOf(E(id)) > 1 ? setsOf(E(id)) + ' × ' : ''}${range(E(id))}</span></button>
         ${!S.editPlan || ['warmup', 'stretch'].includes(id) ? '' : `<button class="mini" data-act="up" data-w="${w.id}" data-i="${i}" aria-label="Выше">↑</button><button class="mini" data-act="down" data-w="${w.id}" data-i="${i}" aria-label="Ниже">↓</button><button class="mini" data-act="swap" data-w="${w.id}" data-i="${i}">Заменить</button><button class="mini" data-act="del" data-w="${w.id}" data-i="${i}" aria-label="Убрать">×</button>`}</div>` : '').join('') +
-      (S.editPlan ? `<button class="btn ghost sm" data-add="${w.id}">+ Добавить упражнение</button>` : '') + `</div>`;
+      (S.editPlan ? `<button class="btn ghost sm" data-add="${w.id}">+ Добавить упражнение</button>${w.custom ? `<div class="exbtns"><button class="btn ghost sm" data-cedit="${w.id}">В калькулятор</button><button class="btn ghost sm danger" data-cdel="${w.id}">Удалить</button></div>` : ''}` : '') + `</div>`;
   });
-  h += S.editPlan ? `<button class="btn ghost" id="rebuild">Пересобрать план по анкете</button>` : '';
+  h += `<button class="btn" id="build">Собрать свою тренировку</button>`;
+  h += S.editPlan ? `<button class="btn ghost" id="rebuild">Пересобрать план по анкете</button><p class="muted">Свои тренировки при пересборке останутся.</p>` : '';
   h += `<details><summary>Как растёт нагрузка</summary><p class="muted">У каждого упражнения диапазон, например 10–15. Дошёл до верхней цифры во всех подходах — приложение скажет «пора усложнять» и как. Пропустил день — просто делай следующую тренировку.</p></details>`;
   $('#screen').innerHTML = h;
 
   $('#editPlan').onclick = () => { S.editPlan = !S.editPlan; haptic(); renderPlan(); };
   $$('[data-open]').forEach(b => b.onclick = () => openExercise(b.dataset.open));
-  $$('[data-wd]').forEach(s => s.onchange = () => { W(s.dataset.wd).weekday = +s.value; saveProgram(); renderPlan(); });
+  $$('[data-wd]').forEach(s => s.onchange = () => { W(s.dataset.wd).weekday = s.value === '' ? null : +s.value; saveProgram(); renderPlan(); });
+  $('#build').onclick = () => { S.builder = null; openBuilder(); };
+  $$('[data-cedit]').forEach(b => b.onclick = () => { const w = W(b.dataset.cedit); S.builder = { place: S.profile.place, focus: 'full', min: 30, list: w.list.slice(), name: w.cname || w.name, day: w.weekday }; openBuilder(w.id); });
+  $$('[data-cdel]').forEach(b => b.onclick = () => ask(`Удалить «${W(b.dataset.cdel).name}»? История тренировок останется.`, () => {
+    const i = S.program.workouts.findIndex(w => w.id === b.dataset.cdel), w = S.program.workouts[i];
+    S.program.workouts.splice(i, 1); saveProgram(); renderPlan();
+    toast('Тренировка удалена', () => { S.program.workouts.splice(i, 0, w); saveProgram(); renderPlan(); });
+  }));
   $$('[data-act]').forEach(b => b.onclick = () => {
     const w = W(b.dataset.w), i = +b.dataset.i, a = b.dataset.act, L = w.list;
     if (a === 'up' && i > 1) [L[i - 1], L[i]] = [L[i], L[i - 1]];
@@ -737,31 +817,34 @@ function renderPlan() {
     openPicker('Добавить упражнение', null, w.list, id => { w.list.splice(Math.max(1, w.list.length - 1), 0, id); saveProgram(); renderPlan(); });
   });
   const rb = $('#rebuild'); if (rb) rb.onclick = () => ask('Собрать план заново по анкете? Твои правки плана сбросятся, история тренировок останется.', () => {
-    S.program = buildProgram(S.profile); saveProgram(); notify(); renderPlan();
+    S.program = keepCustom(buildProgram(S.profile)); saveProgram(); notify(); renderPlan();
   });
 }
 const saveProgram = () => { renameAll(); Store.set('program', S.program); };
 
-function openPicker(title, pat, exclude, onPick) {
-  const p = S.profile;
+function openPicker(title, pat, exclude, onPick, prof, onClose) {
+  const p = prof || S.profile;
   const pats = pat ? [pat] : Object.keys(PATTERNS);
   let h = `<div class="head"><button class="back" id="pback">←</button><h2>${esc(title)}</h2></div>
-    <p class="muted">${pat ? 'Похожие упражнения, которые подходят под твой инвентарь и уровень.' : 'Все упражнения под твой инвентарь и уровень.'}</p>`;
+    <p class="muted">${pat ? 'Похожие упражнения, которые подходят под твой инвентарь и уровень.' : 'Все упражнения под твой инвентарь и уровень.'}</p>
+    ${pat ? '<button class="btn ghost sm" id="pall">Показать все, не только похожие</button>' : ''}`;
   for (const pt of pats) {
     const ok = Object.keys(LIB).filter(id => LIB[id].pat === pt && !exclude.includes(id) && fits(LIB[id], p));
     const other = pat ? Object.keys(LIB).filter(id => LIB[id].pat === pt && !exclude.includes(id) && !fits(LIB[id], p)) : [];
     if (!ok.length && !other.length) continue;
     h += `<h3>${esc(PATTERNS[pt])}</h3>` + ok.map(id => pickRow(id, '')).join('') +
-      (other.length ? `<p class="muted">Нужен другой инвентарь или уровень:</p>` + other.map(id => pickRow(id, needs(LIB[id]))).join('') : '');
+      (other.length ? `<p class="muted">Нужен другой инвентарь или уровень:</p>` + other.map(id => pickRow(id, needs(LIB[id], p))).join('') : '');
   }
   const sh = $('#sheet'); sh.innerHTML = h; sh.hidden = false; sh.scrollTop = 0;
   const close = () => { sh.hidden = true; setBack(null); };
-  $('#pback').onclick = close; setBack(close);
+  const back = () => { close(); if (onClose) onClose(); };
+  $('#pback').onclick = back; setBack(back);
+  const pa = $('#pall'); if (pa) pa.onclick = () => openPicker(title, null, exclude, onPick, prof, onClose);
   $$('[data-pick]', sh).forEach(b => b.onclick = () => { close(); onPick(b.dataset.pick); notify(); });
 }
 const pickRow = (id, note) => `<button class="ex" data-pick="${id}"><div class="n"><b>${esc(LIB[id].name)}</b><span>${esc(LIB[id].mus)}${note ? ' · ' + esc(note) : ''}</span></div><div class="prog">+</div></button>`;
-const needs = e => {
-  const p = S.profile, have = availableEq(p), miss = e.eq.filter(x => !have.includes(x));
+const needs = (e, prof) => {
+  const p = prof || S.profile, have = availableEq(p), miss = e.eq.filter(x => !have.includes(x));
   return [miss.length ? 'нужно: ' + miss.map(x => EQUIP[x].toLowerCase()).join(', ') : '',
     e.lvl > levelOf(p) ? 'для уровня выше' : '',
     e.needPull && p.pullups < e.needPull ? `когда будешь подтягиваться ${e.needPull}+ раз` : '',
@@ -822,19 +905,23 @@ function parseFoodMeals(text) {
 }
 
 function renderFood() {
-  const G = norms(), it = S.food.items;
+  const G = todayNorms(), A = G.A, it = S.food.items;
   const sum = key => Math.round(it.reduce((s, x) => s + (+x[key] || 0), 0));
   const k = sum('k'), p = sum('p'), fsum = sum('f'), csum = sum('c');
   const pct = (v, g) => Math.min(100, v / g * 100);
   const cup = S.profile.cup || 250, wml = S.food.waterMl ?? (S.food.water || 0) * 250;
   const rec = lsGet('recent') || [];
   const left = G.kcal - k, pLeft = G.protein - p;
+  const basePct = A.bonus ? G.base / G.kcal * 100 : 100;
 
+  // Сводка: съедено / норма. Заработанное спортом — отдельный зелёный кусок шкалы и строка «норма + спорт = итого».
   let h = `<h1>Еда</h1>
     <div class="card sum"><div class="row"><div><span class="big">${k}</span><span class="muted"> / ${G.kcal} ккал</span></div><span class="muted">${left > 0 ? 'осталось ' + left : 'норма есть'}</span></div>
-    <div class="bar ${k > G.kcal * 1.1 && S.profile.goal === 'lose' ? 'over' : ''}"><i style="width:${pct(k, G.kcal)}%"></i></div>
+    <div class="bar ${A.bonus ? 'sport' : ''} ${k > G.kcal * 1.1 && S.profile.goal === 'lose' ? 'over' : ''}" style="--b:${basePct}%"><i style="width:${pct(k, G.kcal)}%"></i></div>
+    ${A.bonus ? `<div class="eqline"><span>норма ${G.base}</span><span>+</span><span class="earn">спорт ${A.bonus}</span><span>=</span><b>${G.kcal}</b></div>` : ''}
     <div class="macros">${[['Белки', p, G.protein, 'p'], ['Жиры', fsum, G.fat, 'f'], ['Углеводы', csum, G.carbs, 'c']].map(([n, v, g, cl]) =>
       `<div><span>${n}</span><b>${v}<small> / ${g} г</small></b><div class="bar thin ${cl}"><i style="width:${pct(v, g)}%"></i></div></div>`).join('')}</div></div>`;
+  h += activityCard(A);
 
   h += `<div class="card inputcard"><textarea id="ftext" rows="2" placeholder="Что съел? Скажи или напиши: «на завтрак 4 яйца и чай, на обед гречка с курицей»"></textarea>
     <div class="inrow"><button class="icon big" id="fmic" aria-label="Сказать голосом"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
@@ -868,9 +955,13 @@ function renderFood() {
   const ideas = list.slice(off).concat(list.slice(0, off)).slice(0, 3);
   h += `<div class="row" style="margin-top:22px"><h3 style="margin:0">Идеи на ${MEALS[m].toLowerCase()}</h3><button class="link" id="moreIdeas">Ещё</button></div>
     <div class="ideas">${ideas.map(x => `<button data-idea="${MEAL_IDEAS.indexOf(x)}"><b>${esc(x.n)}</b><span>${x.k} ккал · белок ${x.p} г${x.tip ? ' · ' + esc(x.tip) : ''}</span></button>`).join('')}</div>
-    <details><summary>Своё с цифрами (с упаковки)</summary><div class="form">
-      <input id="fn" placeholder="Название" maxlength="40"><input id="fk" type="number" inputmode="numeric" placeholder="ккал"><input id="fp" type="number" inputmode="numeric" placeholder="белок">
-      <button id="fadd" aria-label="Добавить">+</button></div></details>
+    <details><summary>Своё с цифрами (с упаковки)</summary>
+      <p class="muted">На упаковке цифры на 100 г — впиши их и сколько грамм съел, посчитаю сама. Или просто итог за порцию (тогда граммы оставь пустыми).</p>
+      <div class="form2"><input id="fn" placeholder="Название" maxlength="40" class="wide">
+      <label>ккал<input id="fk" type="text" inputmode="decimal"></label><label>белки<input id="fp" type="text" inputmode="decimal"></label>
+      <label>жиры<input id="ff" type="text" inputmode="decimal"></label><label>углев.<input id="fc" type="text" inputmode="decimal"></label>
+      <label class="wide">съел, грамм (если цифры на 100 г)<input id="fg" type="text" inputmode="numeric" placeholder="—"></label></div>
+      <button class="btn" id="fadd">Добавить</button></details>
     <details id="wkd"><summary>Последние 7 дней</summary><div id="fweek" class="muted">Считаю…</div></details>`;
   $('#screen').innerHTML = h;
   $('#wkd').ontoggle = () => { if ($('#wkd').open) foodWeek(G); };
@@ -885,7 +976,7 @@ function renderFood() {
   $$('[data-rec]').forEach(b => b.onclick = () => { const r = rec[+b.dataset.rec]; addFood([{ n: r.n, k: r.k, p: r.p, f: r.f || 0, c: r.c || 0 }]); });
   $$('[data-idea]').forEach(b => b.onclick = () => { const x = MEAL_IDEAS[+b.dataset.idea]; addFood([{ n: x.n, k: x.k, p: x.p, f: x.f, c: x.c, m }]); });
   $('#moreIdeas').onclick = () => { S.ideaOff = (S.ideaOff || 0) + 3; renderFood(); };
-  const setW = v => { S.food.waterMl = Math.max(0, v); delete S.food.water; saveFood(); haptic(); renderFood(); };
+  const setW = v => { S.food.waterMl = Math.max(0, v); delete S.food.water; saveFood(); haptic(); renderFood(); checkAch(); };
   $('#wPlus').onclick = () => setW(wml + cup);
   $('#wMinus').onclick = () => setW(wml - cup);
   $('#cupSel').onchange = ev => {
@@ -899,9 +990,14 @@ function renderFood() {
     S.cupEdit = false; S.profile.cup = v; Store.set('profile', S.profile); notify(); renderFood();
   };
   $('#fadd').onclick = () => {
-    const n = $('#fn').value.trim() || 'Своё', kk = Math.max(0, +$('#fk').value || 0), pr = Math.max(0, +$('#fp').value || 0);
-    if (kk || pr) addFood([{ n, k: Math.min(kk, 5000), p: Math.min(pr, 300), f: 0, c: 0 }]);
+    const num = id => Math.max(0, parseFloat(String($('#' + id).value).replace(',', '.')) || 0);
+    const g = Math.min(5000, num('fg')), m = g ? g / 100 : 1;
+    const n = ($('#fn').value.trim() || 'Своё') + (g ? `, ${g} г` : '');
+    const kk = num('fk') * m, pr = num('fp') * m, ff = num('ff') * m, cc = num('fc') * m;
+    if (!kk && !pr) { toast('Впиши хотя бы калории'); return; }
+    addFood([{ n, k: Math.round(Math.min(kk || pr * 4 + ff * 9 + cc * 4, 5000)), p: r1(Math.min(pr, 300)), f: r1(ff), c: r1(cc) }]);
   };
+  bindActivity();
   const scale = (x, q) => { if (!x.b) { x.b = { k: x.k, p: x.p, f: x.f || 0, c: x.c || 0 }; x.q = 1; } x.q = q; for (const key of ['k', 'p', 'f', 'c']) x[key] = key === 'k' ? Math.round(x.b.k * q) : r1(x.b[key] * q); };
   $$('[data-inc]').forEach(b => b.onclick = () => { const x = it[+b.dataset.inc]; scale(x, (x.q || 1) + 0.5); saveFood(); haptic(); renderFood(); });
   $$('[data-dec]').forEach(b => b.onclick = () => {
@@ -912,6 +1008,46 @@ function renderFood() {
     toast(`Убрано: ${x.n}`, () => { S.food.items = snap; saveFood(); renderFood(); });
   });
 }
+// Блок «Активность»: тренировка из приложения считается сама, шаги и другой спорт вписываются руками.
+function activityCard(A) {
+  const st = A.st, base = STEP_BASE[S.profile.activity];
+  const rows = [];
+  if (A.tr) rows.push(`<li><span>Тренировка в приложении</span><em class="earn">+${A.tr}</em></li>`);
+  if (A.steps) rows.push(`<li><span>Шаги ${A.steps.toLocaleString('ru')}<br><small class="muted">${st.extra ? `сверх обычных ${base.toLocaleString('ru')}: ${st.extra.toLocaleString('ru')}` : `обычные ${base.toLocaleString('ru')} уже в норме`}</small></span><em class="earn">+${st.k}</em></li>`);
+  A.acts.forEach((a, i) => rows.push(`<li><span>${esc(ACTS[a.t] ? ACTS[a.t].n : a.t)} · ${a.min} мин</span><em class="earn">+${a.k}</em><button data-actdel="${i}" aria-label="Убрать">×</button></li>`));
+  const pick = S.actPick;
+  return `<div class="card act"><div class="row"><b>Активность</b><span class="earn big2">${A.total ? '+' + A.total + ' ккал' : ''}</span></div>
+    ${rows.length ? `<ul class="list">${rows.join('')}</ul>` : '<p class="muted">Шаги, бег, велик, своя силовая — впиши, и это прибавится к норме еды. Тренировка из приложения считается сама.</p>'}
+    ${A.total && sportToFood() && A.share < 1 ? `<p class="muted small">Ты худеешь — в еду засчитываю половину (+${A.bonus}): часы и формулы часто завышают расход.</p>` : ''}
+    ${A.total && !sportToFood() ? '<p class="muted small">Прибавка к еде выключена в Профиле.</p>' : ''}
+    <div class="weight"><input id="stepsIn" type="text" inputmode="numeric" placeholder="Шаги за день${A.steps ? ' · сейчас ' + A.steps : ''}"><button id="stepsOk">Записать</button></div>
+    ${S.actOpen || pick ? `<div class="chiprow acts">${Object.entries(ACTS).map(([t, a]) => `<button data-act-t="${t}" class="${pick === t ? 'on' : ''}">${esc(a.n)}</button>`).join('')}</div>`
+      : '<button class="btn ghost sm" id="actOpen">+ Бег, велик, силовая…</button>'}
+    ${pick ? `<div class="actadd"><b>${esc(ACTS[pick].n)}: сколько минут?</b><div class="pick4">${[15, 30, 45, 60].map(m => `<button data-actmin="${m}">${m}</button>`).join('')}</div>
+      <div class="weight"><input id="actMin" type="text" inputmode="numeric" placeholder="Своё, мин"><button id="actOk">Добавить</button></div></div>` : ''}</div>`;
+}
+function bindActivity() {
+  const save = () => { saveFood(); renderFood(); checkAch(); };
+  $('#stepsOk').onclick = () => {
+    const v = parseInt(String($('#stepsIn').value).replace(/\s/g, ''), 10);
+    if (!(v >= 0 && v <= 100000)) { toast('Впиши шаги числом, например 8500'); return; }
+    const pv = S.food.steps; S.food.steps = v; notify(); save();
+    toast(`Шаги: ${v.toLocaleString('ru')}`, () => { S.food.steps = pv; save(); });
+  };
+  const ao = $('#actOpen'); if (ao) ao.onclick = () => { S.actOpen = true; haptic(); renderFood(); };
+  $$('[data-act-t]').forEach(b => b.onclick = () => { S.actPick = S.actPick === b.dataset.actT ? null : b.dataset.actT; haptic(); renderFood(); });
+  const add = min => {
+    if (!(min >= 1 && min <= 600)) { toast('От 1 до 600 минут'); return; }
+    S.food.act = (S.food.act || []).concat({ t: S.actPick, min }); const n = ACTS[S.actPick].n; S.actPick = null; S.actOpen = false; notify(); save();
+    toast(`${n} · ${min} мин добавлено`, () => { S.food.act.pop(); save(); });
+  };
+  $$('[data-actmin]').forEach(b => b.onclick = () => add(+b.dataset.actmin));
+  const ok = $('#actOk'); if (ok) ok.onclick = () => add(parseInt($('#actMin').value, 10));
+  $$('[data-actdel]').forEach(b => b.onclick = () => {
+    const i = +b.dataset.actdel, x = S.food.act[i]; S.food.act.splice(i, 1); save();
+    toast('Убрано', () => { S.food.act.splice(i, 0, x); save(); });
+  });
+}
 function addFood(list) {
   const m = S.meal ?? mealNow();
   list.forEach(x => { if (x.m == null) x.m = m; });
@@ -920,7 +1056,7 @@ function addFood(list) {
   let rec = lsGet('recent') || [];
   list.forEach(x => { rec = rec.filter(r => r.n !== x.n); rec.unshift({ n: x.n, k: x.k, p: x.p, f: x.f || 0, c: x.c || 0 }); });
   rec = rec.slice(0, 10); Store.set('recent', rec);
-  notify(); renderFood();
+  notify(); renderFood(); checkAch();
   const n = list.length;
   toast(n === 1 ? `Добавлено: ${list[0].n}` : `Добавлено ${n} ${plural(n, 'блюдо', 'блюда', 'блюд')}`, () => { S.food.items.splice(S.food.items.length - n, n); saveFood(); renderFood(); });
 }
@@ -1040,51 +1176,22 @@ function weekStreak(dates) { // недель подряд с хотя бы од�
   }
   return streak;
 }
-function achievements() {
-  const dates = trainedDates(), best = id => exStats(id).best, p = S.profile;
-  const perWeek = {};
-  dates.forEach(d => { const k = dateKey(weekStart(fromKey(d))); perWeek[k] = (perWeek[k] || 0) + 1; });
-  const fullWeeks = Object.values(perWeek).filter(n => n >= Math.min(3, p.days.length)).length;
-  const diff = curWeight() - p.weight, dir = p.goal === 'lose' ? -1 : 1;
-  const target = +p.target;
-  return [
-    { id: 'first', t: 'Первая тренировка', ok: dates.length >= 1 },
-    { id: 't10', t: '10 тренировок', ok: dates.length >= 10 },
-    { id: 't25', t: '25 тренировок', ok: dates.length >= 25 },
-    { id: 't50', t: '50 тренировок', ok: dates.length >= 50 },
-    { id: 't100', t: '100 тренировок', ok: dates.length >= 100 },
-    { id: 'week', t: 'Неделя по плану', ok: fullWeeks >= 1 },
-    { id: 'week4', t: '4 недели по плану', ok: fullWeeks >= 4 },
-    { id: 'streak8', t: '8 недель подряд', ok: weekStreak(dates) >= 8 },
-    { id: 'pullup1', t: 'Первое подтягивание', ok: best('pullup') >= 1 || best('chinup') >= 1 },
-    { id: 'pullup10', t: '10 подтягиваний', ok: best('pullup') >= 10 },
-    { id: 'push25', t: '25 отжиманий', ok: best('pushup') >= 25 },
-    { id: 'hang45', t: 'Вис 45 секунд', ok: best('hang') >= 45 },
-    { id: 'plank60', t: 'Планка минута', ok: best('plank') >= 60 },
-    { id: 'kg2', t: p.goal === 'lose' ? 'Минус 2 кг' : 'Плюс 2 кг', ok: diff * dir >= 2 && p.goal !== 'fit' },
-    { id: 'target', t: 'Цель по весу', ok: !!target && (p.goal === 'lose' ? curWeight() <= target : curWeight() >= target) },
-    { id: 'food7', t: 'Неделя записей еды', ok: (lsGet('foodDays') || 0) >= 7 },
-  ];
-}
-function newAchievements() {
-  const fresh = achievements().filter(a => a.ok && !S.ach.includes(a.id));
-  if (fresh.length) { S.ach = S.ach.concat(fresh.map(a => a.id)); Store.set('ach', S.ach); notify(); }
-  return fresh;
-}
 async function renderProgress() {
-  const dates = trainedDates(), mon = weekStart();
-  const week = dates.filter(d => d >= dateKey(mon)).length, planW = S.program.workouts.length;
+  const dates = trainedDates(), full = fullDates(), mon = weekStart();
+  const part = dates.length - full.length;
+  const wk = dates.filter(d => d >= dateKey(mon)), wkFull = wk.filter(d => isFull(S.history[d])).length;
+  const planW = S.program.workouts.filter(w => w.weekday != null).length || S.program.workouts.length;
   const streak = weekStreak(dates);
-  const best = id => exStats(id).best;
   const lastW = S.weights.length ? S.weights[S.weights.length - 1] : null;
-  newAchievements();
+  checkAch();
 
   let h = `<h1>Прогресс</h1><p class="sub">Всё сохраняется навсегда, ничего не сбрасывается.</p>
-    <div class="stats"><div><b>${dates.length}</b><span>тренировок всего</span></div>
-    <div><b>${week}/${planW}</b><span>на этой неделе</span></div><div><b>${streak}</b><span>${plural(streak, 'неделя', 'недели', 'недель')} подряд</span></div></div>
+    <div class="stats"><div><b>${full.length}</b><span>${plural(full.length, 'полная тренировка', 'полные тренировки', 'полных тренировок')}</span>${part ? `<small class="parttag">+${part} неполн.</small>` : ''}</div>
+    <div><b>${wkFull}/${planW}</b><span>на этой неделе</span>${wk.length > wkFull ? `<small class="parttag">+${wk.length - wkFull} неполн.</small>` : ''}</div><div><b>${streak}</b><span>${plural(streak, 'неделя', 'недели', 'недель')} подряд</span></div></div>
     <h3>Последние 4 недели</h3><div class="heat">${heatmap(dates)}</div>
-    <details><summary>Нагрузка по мышцам за неделю</summary>${muscleVolume(dates.filter(d => d >= dateKey(mon)))}</details>
-    <h3>Достижения</h3><div class="ach">${achievements().map(a => `<span class="${a.ok ? 'on' : ''}">${esc(a.t)}</span>`).join('')}</div>
+    <div class="legend"><span><i class="on"></i>полная</span><span><i class="half"></i>неполная</span></div>
+    <details><summary>Нагрузка по мышцам за неделю</summary>${muscleVolume(wk)}</details>
+    ${achHTML()}
     <h3>Вес (раз в неделю, утром натощак)</h3>
     <div class="weight"><input id="wIn" type="text" inputmode="decimal" placeholder="${lastW ? lastW.w : S.profile.weight}"><button id="wSave">Записать</button></div>
     <canvas id="chart"></canvas><p class="muted">${weightAdvice()}</p>
@@ -1098,7 +1205,8 @@ async function renderProgress() {
       const w = S.history[d], name = (w.wid && W(w.wid) && W(w.wid).name) || w.name || 'Тренировка';
       const parts = Object.entries(w.sets).filter(([id, v]) => LIB[id] && !['warmup', 'stretch'].includes(id) && v.some(x => x != null))
         .map(([id, v]) => { const kg = ((w.kg || {})[id] || []).filter(x => x != null); return `${LIB[id].name.split(' ')[0].toLowerCase()} ${kg.length ? Math.max(...kg) + 'кг×' : ''}${v.filter(x => x != null).join('/')}`; });
-      return `<li><span><b>${fmtDate(d)}</b> ${esc(name)}<br><span class="muted small">${esc(parts.join(' · ') || 'разминка')}</span>${w.feel != null ? ' · ' + FEEL[w.feel].toLowerCase() : ''}</span></li>`;
+      const c = completion(w);
+      return `<li><span><b>${fmtDate(d)}</b> ${esc(name)}${c < 0.85 ? ` <small class="parttag">неполная · ${Math.round(c * 100)} %</small>` : ''}<br><span class="muted small">${esc(parts.join(' · ') || 'разминка')}</span>${w.feel != null ? ' · ' + FEEL[w.feel].toLowerCase() : ''}</span></li>`;
     }).join('') || '<li><span class="muted">Первая тренировка появится здесь.</span></li>'}</ul></details>`;
   $('#screen').innerHTML = h;
   drawChart();
@@ -1106,7 +1214,7 @@ async function renderProgress() {
     const w = parseFloat(String($('#wIn').value).replace(',', '.'));
     if (!(w >= 30 && w <= 250)) { notify('error'); return; }
     S.weights = S.weights.filter(x => x.d !== S.today).concat({ d: S.today, w }).sort((a, b) => a.d < b.d ? -1 : 1);
-    Store.set('weights', S.weights); notify(); renderProgress();
+    Store.set('weights', S.weights); notify(); renderProgress(); checkAch();
   };
   $('#mSave').onclick = () => {
     const m = { d: S.today };
@@ -1136,7 +1244,8 @@ function heatmap(dates) {
   let h = WEEK.map(d => `<i class="hd">${WD[d]}</i>`).join('');
   for (let i = 0; i < 28; i++) {
     const d = new Date(start); d.setDate(start.getDate() + i); const k = dateKey(d);
-    h += `<i class="${set.has(k) ? 'on' : ''} ${k === S.today ? 'now' : ''} ${k > S.today ? 'fut' : ''}">${d.getDate()}</i>`;
+    const st = set.has(k) ? (isFull(S.history[k]) ? 'on' : 'half') : '';
+    h += `<i class="${st} ${k === S.today ? 'now' : ''} ${k > S.today ? 'fut' : ''}"${st === 'half' ? ` style="--p:${Math.round(completion(S.history[k]) * 100)}%"` : ''}>${d.getDate()}</i>`;
   }
   return h;
 }
@@ -1185,6 +1294,211 @@ function drawChart() {
   if (pts.length > 1) g.fillText(fmtDate(pts[pts.length - 1].d), Wd - 34, H - 3);
 }
 
+/* =================== СВОИ НОРМЫ =================== */
+function normsEditor(p) {
+  const c = p.custom || {}, f = norms({ ...p, custom: null });
+  const fld = (k, n, ph) => `<label>${n}<input data-norm="${k}" type="text" inputmode="numeric" value="${c[k] || ''}" placeholder="${ph}"></label>`;
+  return `<details ${S.normOpen ? 'open' : ''} id="normBox"><summary>Свои нормы КБЖУ</summary>
+    <p class="muted">Знаешь свои цифры — от тренера, диетолога или часов? Впиши. Пустое поле — считаю по формуле (серые цифры).</p>
+    <div class="form2">${fld('kcal', 'ккал', f.kcal)}${fld('protein', 'белки, г', f.protein)}${fld('fat', 'жиры, г', f.fat)}${fld('carbs', 'углеводы, г', f.carbs)}
+    <label class="wide">% жира в теле — если знаешь (весы, замер). Формула станет точнее<input id="bfIn" type="text" inputmode="decimal" value="${p.bodyFat || ''}" placeholder="—"></label></div>
+    <button class="btn" id="normSave">Сохранить</button>${p.custom || p.bodyFat ? '<button class="btn ghost" id="normReset">Вернуть всё по формуле</button>' : ''}</details>`;
+}
+function bindNormsEditor() {
+  const box = $('#normBox'); box.ontoggle = () => { S.normOpen = box.open; };
+  $('#normSave').onclick = () => {
+    const lim = { kcal: [800, 6000], protein: [20, 400], fat: [15, 300], carbs: [0, 900] }, c = {};
+    let bad = '';
+    $$('[data-norm]').forEach(i => { const v = parseInt(i.value, 10), [lo, hi] = lim[i.dataset.norm]; if (i.value.trim() === '') return; if (v >= lo && v <= hi) c[i.dataset.norm] = v; else bad = `${i.parentElement.firstChild.textContent}: от ${lo} до ${hi}`; });
+    const bf = parseFloat(String($('#bfIn').value).replace(',', '.'));
+    if ($('#bfIn').value.trim() && !(bf >= 3 && bf <= 60)) bad = '% жира: от 3 до 60';
+    if (bad) { toast(bad); notify('error'); return; }
+    S.profile.custom = Object.keys(c).length ? c : null; S.profile.bodyFat = bf || null;
+    Store.set('profile', S.profile); notify(); toast(Object.keys(c).length ? 'Свои нормы сохранены' : 'Нормы — по формуле'); renderProfile();
+  };
+  const rs = $('#normReset'); if (rs) rs.onclick = () => { const pc = S.profile.custom, pb = S.profile.bodyFat; S.profile.custom = null; S.profile.bodyFat = null; Store.set('profile', S.profile); renderProfile();
+    toast('Вернула нормы по формуле', () => { S.profile.custom = pc; S.profile.bodyFat = pb; Store.set('profile', S.profile); renderProfile(); }); };
+}
+
+/* =================== ТЕМЫ =================== */
+const THEMES = {
+  tg: { n: 'Как в Телеграме' },
+  light: { n: 'Светлая', bg: '#f6f5f2', text: '#1d1c1a', hint: '#7d7a73', accent: '#2f7d5b' },
+  dark: { n: 'Тёмная', bg: '#161615', text: '#eeede9', hint: '#93908a', accent: '#49a27a' },
+  paper: { n: 'Бумага', bg: '#efe6d4', text: '#2b2418', hint: '#85796a', accent: '#b4482d' },
+  night: { n: 'Ночь', bg: '#000000', text: '#f0efe9', hint: '#8a8984', accent: '#e8ad3e' },
+  forest: { n: 'Лес', bg: '#14211b', text: '#e4ede7', hint: '#8ea497', accent: '#7fcf98' },
+  sea: { n: 'Море', bg: '#0f1b26', text: '#e3ecf3', hint: '#8698a8', accent: '#4fb0e8' },
+};
+const ACCENTS = ['#2f7d5b', '#b4482d', '#e8ad3e', '#4fb0e8', '#8a63d2', '#d6457a', '#3a3a3a', '#6b8e23'];
+const lum = hex => { const n = parseInt(hex.slice(1), 16), c = [n >> 16, n >> 8 & 255, n & 255].map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]; };
+function applyTheme() {
+  const p = S.profile || {}, t = THEMES[p.theme] || THEMES.tg, st = document.documentElement.style;
+  ['--bg', '--text', '--hint', '--accent', '--accent-text'].forEach(v => st.removeProperty(v));
+  let bg = t.bg, accent = p.accent || t.accent;
+  if (t.bg) { st.setProperty('--bg', t.bg); st.setProperty('--text', t.text); st.setProperty('--hint', t.hint); }
+  if (accent) { st.setProperty('--accent', accent); st.setProperty('--accent-text', lum(accent) > 0.45 ? '#141414' : '#ffffff'); }
+  try { if (tg && bg) { tg.setHeaderColor(bg); tg.setBackgroundColor(bg); if (tg.setBottomBarColor) tg.setBottomBarColor(bg); } else if (tg) { tg.setHeaderColor('bg_color'); tg.setBackgroundColor('bg_color'); } } catch (e) {}
+}
+function themeEditor() {
+  const p = S.profile, cur = p.theme || 'tg';
+  return `<details ${S.themeOpen ? 'open' : ''} id="themeBox"><summary>Оформление</summary>
+    <div class="themes">${Object.entries(THEMES).map(([k, t]) => `<button data-theme="${k}" class="${cur === k ? 'on' : ''}" style="${t.bg ? `--tb:${t.bg};--tt:${t.text};--ta:${t.accent}` : ''}"><i></i><span>${t.n}</span></button>`).join('')}</div>
+    <h3>Свой цвет кнопок</h3>
+    <div class="swatches">${ACCENTS.map(c => `<button data-acc="${c}" style="background:${c}" class="${p.accent === c ? 'on' : ''}" aria-label="Цвет ${c}"></button>`).join('')}
+      <label class="swpick" aria-label="Любой цвет"><input type="color" id="accPick" value="${p.accent || '#2f7d5b'}">своё</label></div>
+    ${p.accent ? '<button class="link" id="accReset">Вернуть цвет темы</button>' : ''}</details>`;
+}
+function bindThemeEditor() {
+  const box = $('#themeBox'); box.ontoggle = () => { S.themeOpen = box.open; };
+  const set = (k, v) => { S.profile[k] = v; Store.set('profile', S.profile); applyTheme(); haptic(); renderProfile(); if (v && !S.ach.includes('style')) checkAch(); };
+  $$('[data-theme]').forEach(b => b.onclick = () => set('theme', b.dataset.theme === 'tg' ? null : b.dataset.theme));
+  $$('[data-acc]').forEach(b => b.onclick = () => set('accent', b.dataset.acc));
+  $('#accPick').onchange = ev => set('accent', ev.target.value);
+  const r = $('#accReset'); if (r) r.onclick = () => set('accent', null);
+}
+
+/* =================== СВОЯ ТРЕНИРОВКА (калькулятор) =================== */
+const FOCUS = {
+  full: { n: 'Всё тело', pats: ['pull_v', 'squat', 'push_h', 'hinge', 'pull_h', 'lunge', 'core', 'push_v', 'biceps', 'triceps'] },
+  upper: { n: 'Верх', pats: ['push_h', 'pull_v', 'push_v', 'pull_h', 'biceps', 'triceps', 'delts', 'core'] },
+  lower: { n: 'Ноги и ягодицы', pats: ['squat', 'hinge', 'lunge', 'glute', 'calves', 'core', 'squat'] },
+  back: { n: 'Спина', pats: ['pull_v', 'pull_h', 'hinge', 'pull_h', 'biceps', 'grip'] },
+  chest: { n: 'Грудь и плечи', pats: ['push_h', 'push_v', 'push_h', 'delts', 'triceps', 'core'] },
+  arms: { n: 'Руки', pats: ['biceps', 'triceps', 'grip', 'biceps', 'triceps', 'delts'] },
+  core: { n: 'Пресс', pats: ['core', 'core', 'core', 'glute', 'core'] },
+};
+const BUILD_PLACES = { none: 'Дома без инвентаря', home: 'Дома с инвентарём', street: 'Улица', gym: 'Зал' };
+function buildCustom(cfg) {
+  const prof = { ...S.profile, place: cfg.place, equip: cfg.place === 'home' ? (S.profile.equip || []) : [] };
+  const n = { 15: 3, 30: 5, 45: 7, 60: 9 }[cfg.min] || 5, chosen = [];
+  const pats = FOCUS[cfg.focus].pats;
+  for (let i = 0; chosen.length < n && i < pats.length * 3; i++) {
+    const c = candidates(pats[i % pats.length], prof).filter(id => !chosen.includes(id));
+    if (c.length) chosen.push(c[Math.floor(i / pats.length) % Math.min(3, c.length)] || c[0]);
+  }
+  return { prof, list: ['warmup', ...chosen, 'stretch'] };
+}
+function openBuilder(edit) {
+  const sh = $('#sheet');
+  const B = S.builder = S.builder || { place: S.profile.place, focus: 'full', min: 30, list: null, name: '', day: null };
+  if (!B.list) { B.list = buildCustom(B).list; B.name = ''; }
+  const prof = { ...S.profile, place: B.place, equip: B.place === 'home' ? (S.profile.equip || []) : [] };
+  const auto = `${FOCUS[B.focus].n} · ${BUILD_PLACES[B.place].toLowerCase()}`;
+  let h = `<div class="exhead"><button class="back" id="bback" aria-label="Назад">←</button><div><small>Калькулятор тренировок</small><h2>Своя тренировка</h2></div></div>
+    <h3>Где</h3><div class="pick2">${Object.entries(BUILD_PLACES).map(([k, n]) => `<button class="opt ${B.place === k ? 'on' : ''}" data-bp="${k}">${n}</button>`).join('')}</div>
+    <h3>Что качаем</h3><div class="chips">${Object.entries(FOCUS).map(([k, f]) => `<button class="chip ${B.focus === k ? 'on' : ''}" data-bf="${k}">${f.n}</button>`).join('')}</div>
+    <h3>Сколько времени</h3><div class="pick4">${[15, 30, 45, 60].map(m => `<button class="opt ${B.min === m ? 'on' : ''}" data-bm="${m}">${m} мин</button>`).join('')}</div>
+    <h3>Упражнения · ~${workoutMin(B.list)} мин · ≈ ${workoutKcal(B.list)} ккал</h3>
+    <div class="wsec">${B.list.map((id, i) => LIB[id] ? `<div class="prow"><span class="pname"><b>${esc(LIB[id].name)}</b><span>${esc(LIB[id].mus)}</span></span>
+      ${['warmup', 'stretch'].includes(id) ? '' : `<button class="mini" data-bswap="${i}">Заменить</button><button class="mini" data-bdel="${i}" aria-label="Убрать">×</button>`}</div>` : '').join('')}
+      <button class="btn ghost sm" id="badd">+ Добавить упражнение</button><button class="link" id="bshuffle">Подобрать другие</button></div>
+    <label class="fld">Название<input id="bname" maxlength="30" value="${esc(B.name)}" placeholder="${esc(auto)}"></label>
+    <h3>День недели</h3><div class="chips week"><button class="chip ${B.day == null ? 'on' : ''}" data-bd="">любой</button>${WEEK.map(d => `<button class="chip ${B.day === d ? 'on' : ''}" data-bd="${d}">${WD[d]}</button>`).join('')}</div>
+    <p class="muted">«Любой» — тренировка лежит в списке и запускается, когда захочешь. С днём — встаёт в план вместо обычной на этот день.</p>
+    <div class="actionbar"><div class="exbtns"><button class="btn ghost" id="bnow">Сделать сейчас</button><button class="btn" id="bsave">Сохранить</button></div></div>`;
+  sh.innerHTML = h; sh.hidden = false;
+  const close = () => { sh.hidden = true; S.builder = null; setBack(null); render(); };
+  $('#bback').onclick = close; setBack(close);
+  const keepName = () => { B.name = $('#bname').value.trim(); };
+  const rebuild = () => { keepName(); B.list = buildCustom(B).list; haptic(); openBuilder(edit); };
+  $$('[data-bp]').forEach(b => b.onclick = () => { B.place = b.dataset.bp; rebuild(); });
+  $$('[data-bf]').forEach(b => b.onclick = () => { B.focus = b.dataset.bf; rebuild(); });
+  $$('[data-bm]').forEach(b => b.onclick = () => { B.min = +b.dataset.bm; rebuild(); });
+  $('#bshuffle').onclick = () => { keepName(); const pats = FOCUS[B.focus].pats; B.list = ['warmup', ...MAIN(B.list).map(id => { const c = candidates(LIB[id].pat, prof).filter(x => x !== id && !B.list.includes(x)); return c.length ? c[Math.floor(Math.random() * Math.min(3, c.length))] : id; }), 'stretch']; void pats; haptic(); openBuilder(edit); };
+  $$('[data-bdel]').forEach(b => b.onclick = () => { keepName(); B.list.splice(+b.dataset.bdel, 1); haptic(); openBuilder(edit); });
+  $$('[data-bswap]').forEach(b => b.onclick = () => { keepName(); const i = +b.dataset.bswap; openPicker(`Заменить «${LIB[B.list[i]].name}»`, LIB[B.list[i]].pat, B.list, id => { B.list[i] = id; openBuilder(edit); }, prof, () => openBuilder(edit)); });
+  $('#badd').onclick = () => { keepName(); openPicker('Добавить упражнение', null, B.list, id => { B.list.splice(B.list.length - 1, 0, id); openBuilder(edit); }, prof, () => openBuilder(edit)); };
+  $$('[data-bd]').forEach(b => b.onclick = () => { keepName(); B.day = b.dataset.bd === '' ? null : +b.dataset.bd; haptic(); openBuilder(edit); });
+  const save = () => {
+    keepName();
+    if (MAIN(B.list).length < 1) { toast('Добавь хотя бы одно упражнение'); return null; }
+    const name = B.name || auto;
+    let w = edit && W(edit);
+    if (w) Object.assign(w, { list: B.list.slice(), cname: name, weekday: B.day });
+    else { w = { id: 'c' + Date.now().toString(36), custom: true, cname: name, weekday: B.day, list: B.list.slice(), extra: [] }; S.program.workouts.push(w); }
+    if (B.day != null) S.program.workouts.forEach(x => { if (x !== w && x.weekday === B.day) x.weekday = x.custom ? null : x.weekday; });
+    saveProgram(); checkAch(); return w;
+  };
+  $('#bsave').onclick = () => { const w = save(); if (!w) return; notify(); toast(`«${w.name}» сохранена${w.weekday != null ? ' на ' + WD[w.weekday] : ''}`); close(); };
+  $('#bnow').onclick = () => { const w = save(); if (!w) return; S.workout.wid = w.id; S.anyway = true; S.choosing = false; saveWorkout(); notify(); sh.hidden = true; S.builder = null; setBack(null);
+    S.tab = 'today'; $$('.tabs button').forEach(x => x.classList.toggle('on', x.dataset.tab === 'today')); render(); scrollTo(0, 0); };
+}
+
+/* =================== ДОСТИЖЕНИЯ (скрытые, всплывают как в играх) =================== */
+function achievements() {
+  const dates = trainedDates(), full = fullDates(), best = id => exStats(id).best, p = S.profile;
+  const perWeek = {};
+  full.forEach(d => { const k = dateKey(weekStart(fromKey(d))); perWeek[k] = (perWeek[k] || 0) + 1; });
+  const regular = S.program.workouts.filter(w => w.weekday != null).length || 3;
+  const fullWeeks = Object.values(perWeek).filter(n => n >= Math.min(3, regular)).length;
+  const diff = curWeight() - p.weight, dir = p.goal === 'lose' ? -1 : 1, target = +p.target;
+  const hours = dates.map(d => S.history[d].start).filter(Boolean).map(t => new Date(t).getHours());
+  const tonnage = d => { const w = S.history[d]; return Object.entries(w.kg || {}).reduce((s, [id, kg]) => s + kg.reduce((a, x, i) => a + (x && w.sets[id] && w.sets[id][i] ? x * w.sets[id][i] : 0), 0), 0); };
+  const gaps = dates.slice(1).some((d, i) => (fromKey(d) - fromKey(dates[i])) / 864e5 >= 14);
+  const T = todayNorms(), it = S.food.items, eatP = it.reduce((s, x) => s + (+x.p || 0), 0);
+  const wml = S.food.waterMl ?? (S.food.water || 0) * 250;
+  return [
+    { id: 'first', t: 'Первый шаг', d: 'Сделал первую тренировку', ok: dates.length >= 1 },
+    { id: 'fullone', t: 'Без халтуры', d: 'Сделал тренировку целиком, все подходы', ok: full.length >= 1 },
+    { id: 't10', t: 'Десятка', d: '10 полных тренировок', ok: full.length >= 10 },
+    { id: 't25', t: 'Четверть сотни', d: '25 полных тренировок', ok: full.length >= 25 },
+    { id: 't50', t: 'Полтинник', d: '50 полных тренировок', ok: full.length >= 50 },
+    { id: 't100', t: 'Сотка', d: '100 полных тренировок', ok: full.length >= 100 },
+    { id: 'week', t: 'Неделя по плану', d: 'Все тренировки недели — полностью', ok: fullWeeks >= 1 },
+    { id: 'week4', t: 'Месяц дисциплины', d: '4 недели по плану', ok: fullWeeks >= 4 },
+    { id: 'streak8', t: 'Не сломался', d: '8 недель подряд с тренировками', ok: weekStreak(dates) >= 8 },
+    { id: 'comeback', t: 'Возвращение', d: 'Вернулся после перерыва в 2 недели', ok: gaps },
+    { id: 'early', t: 'Ранняя пташка', d: 'Тренировка до 8 утра', ok: hours.some(h => h < 8) },
+    { id: 'owl', t: 'Сова', d: 'Тренировка после 22:00', ok: hours.some(h => h >= 22) },
+    { id: 'tonne', t: 'Тонна', d: 'Поднял за тренировку больше 1000 кг суммарно', ok: dates.some(d => tonnage(d) >= 1000) },
+    { id: 'pullup1', t: 'Первое подтягивание', d: 'Подтянулся хотя бы раз', ok: best('pullup') >= 1 || best('chinup') >= 1 },
+    { id: 'pullup10', t: 'Турникмен', d: '10 подтягиваний за подход', ok: best('pullup') >= 10 },
+    { id: 'push25', t: '25 отжиманий', d: '25 отжиманий за подход', ok: best('pushup') >= 25 },
+    { id: 'hang45', t: 'Железный хват', d: 'Вис 45 секунд', ok: best('hang') >= 45 },
+    { id: 'plank60', t: 'Минута в планке', d: 'Планка 60 секунд', ok: best('plank') >= 60 },
+    { id: 'kg2', t: p.goal === 'lose' ? 'Минус 2 кг' : 'Плюс 2 кг', d: 'Вес сдвинулся к цели на 2 кг', ok: diff * dir >= 2 && p.goal !== 'fit' },
+    { id: 'target', t: 'Цель по весу', d: 'Дошёл до желаемого веса', ok: !!target && (p.goal === 'lose' ? curWeight() <= target : curWeight() >= target) },
+    { id: 'food7', t: 'Дневник еды', d: '7 дней записывал еду', ok: (lsGet('foodDays') || 0) >= 7 },
+    { id: 'protein', t: 'Белковый день', d: 'Добрал норму белка за день', ok: eatP >= T.protein },
+    { id: 'water', t: 'Водный баланс', d: 'Выпил норму воды', ok: wml >= T.waterMl },
+    { id: 'steps10k', t: '10 000 шагов', d: 'Прошёл 10 000 шагов за день', ok: (S.food.steps || 0) >= 10000 },
+    { id: 'earn300', t: 'Заработал ужин', d: 'Сжёг спортом 300+ ккал за день', ok: T.A.total >= 300 },
+    { id: 'builder', t: 'Сам себе тренер', d: 'Собрал свою тренировку', ok: S.program.workouts.some(w => w.custom) },
+    { id: 'style', t: 'Со вкусом', d: 'Сменил оформление', ok: !!(p.theme || p.accent) },
+  ];
+}
+const achQ = [];
+function checkAch() {
+  if (!S.profile || !S.program) return;
+  const fresh = achievements().filter(a => a.ok && !S.ach.includes(a.id));
+  if (!fresh.length) return;
+  S.ach = S.ach.concat(fresh.map(a => a.id)); Store.set('ach', S.ach);
+  achQ.push(...fresh); if (achQ.length === fresh.length) setTimeout(showAch, 350);
+}
+const MEDAL = `<svg viewBox="0 0 120 150" class="medal"><path class="rib" d="M40 8 L52 62 L60 56 L68 62 L80 8"/><path class="rib2" d="M44 8 L80 8"/>
+  <path class="disc" d="M60 58 C83 57 99 74 98 97 C97 120 80 136 59 135 C37 134 21 118 22 96 C23 74 39 59 60 58 Z"/>
+  <path class="disc in" d="M60 70 C76 70 87 82 86 97 C85 112 74 123 59 122 C45 121 34 110 34 96 C35 81 45 70 60 70 Z"/>
+  <path class="star" d="M60 80 L65 92 L78 93 L68 101 L71 114 L60 107 L49 114 L52 101 L42 93 L55 92 Z"/></svg>`;
+function showAch() {
+  const a = achQ[0]; if (!a) return;
+  let el = $('#achPop');
+  if (!el) { el = document.createElement('div'); el.id = 'achPop'; el.className = 'achpop'; document.body.appendChild(el); }
+  const left = achQ.length - 1;
+  el.innerHTML = `<div class="achcard"><div class="achk">Новое достижение</div>${MEDAL}<h2>${esc(a.t)}</h2><p>${esc(a.d)}</p>
+    <button class="btn" id="achOk">${left ? `Круто · ещё ${left}` : 'Круто'}</button></div>`;
+  el.hidden = false; el.classList.remove('show'); void el.offsetWidth; el.classList.add('show');
+  notify(); [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 140), i * 110));
+  try { navigator.vibrate && navigator.vibrate([60, 40, 60, 40, 140]); } catch (e) {}
+  $('#achOk').onclick = () => { achQ.shift(); el.hidden = true; if (achQ.length) setTimeout(showAch, 200); };
+}
+function achHTML() {
+  const list = achievements(), got = list.filter(a => S.ach.includes(a.id) || a.ok), hid = list.length - got.length;
+  return `<h3>Достижения · ${got.length} из ${list.length}</h3><div class="achgrid">${got.map(a => `<div class="achtile on"><b>${esc(a.t)}</b><span>${esc(a.d)}</span></div>`).join('')}
+    ${Array(hid).fill('<div class="achtile"><b>?</b><span>скрыто</span></div>').join('')}</div>
+    ${hid ? `<p class="muted small">${hid} ${plural(hid, 'достижение скрыто', 'достижения скрыты', 'достижений скрыто')}. Узнаешь, когда получишь.</p>` : ''}`;
+}
+
 /* =================== ПРОФИЛЬ =================== */
 function renderProfile() {
   const p = S.profile, n = norms();
@@ -1193,7 +1507,11 @@ function renderProfile() {
     <h3>Нормы в день</h3>
     <div class="stats"><div><b>${n.kcal}</b><span>ккал</span></div><div><b>${n.protein} г</b><span>белка</span></div><div><b>${n.water} л</b><span>воды</span></div>
     <div><b>${n.fat} г</b><span>жиров</span></div><div><b>${n.carbs} г</b><span>углеводов</span></div><div><b>${levelOf(p) === 1 ? 'новичок' : levelOf(p) === 2 ? 'средний' : 'опытный'}</b><span>уровень</span></div></div>
-    <div class="tip">Как посчитано: базовый обмен по формуле Миффлина — Сан-Жеора = <b>${n.bmr} ккал</b> (столько тело тратит в покое). × активность и тренировки = <b>${n.tdee} ккал</b>. Цель «${GOAL_NAMES[p.goal].toLowerCase()}» → <b>${n.kcal} ккал</b>. Белок — ${{ gain: 1.8, strength: 1.8, lose: 2, fit: 1.6 }[p.goal]} г на кг веса. Вода — ~33 мл на кг. Нормы пересчитываются, когда записываешь новый вес.</div>
+    <div class="tip">${n.own ? '<b>Стоят твои цифры.</b> Пустые поля посчитаны по формуле. ' : ''}Как посчитано: базовый обмен по формуле ${n.katch ? `Кетча — МакАрдла (по % жира ${p.bodyFat})` : 'Миффлина — Сан-Жеора'} = <b>${n.bmr} ккал</b> (столько тело тратит в покое). × обычная активность = <b>${n.tdee} ккал</b>. Цель «${GOAL_NAMES[p.goal].toLowerCase()}» → <b>${n.kcal} ккал</b>. ${sportToFood() ? 'Тренировки, шаги и спорт прибавляются к этой норме каждый день отдельно.' : 'Тренировки уже заложены в норму.'} Белок — ${{ gain: 1.8, strength: 1.8, lose: 2, fit: 1.6 }[p.goal]} г на кг веса. Вода — ~33 мл на кг. Нормы пересчитываются, когда записываешь новый вес.</div>
+    ${normsEditor(p)}
+    <details><summary>Спорт и еда</summary><p class="muted">Сжёг на тренировке или пробежке 300 ккал — норма еды на сегодня вырастет на 300 (при похудении — на половину).</p>
+      <div class="seg" id="s2f"><button data-s2f="1" class="${sportToFood() ? 'on' : ''}">Прибавлять к еде</button><button data-s2f="0" class="${sportToFood() ? '' : 'on'}">Не прибавлять</button></div></details>
+    ${themeEditor()}
     <h3>Анкета</h3><ul class="list">
       <li><span>Цель</span><em>${GOAL_NAMES[p.goal]}${p.target ? ', ' + p.target + ' кг' : ''}</em></li>
       <li><span>Активность</span><em>${ACT_NAMES[p.activity].split(' (')[0]}</em></li>
@@ -1209,6 +1527,8 @@ function renderProfile() {
     <p class="muted" style="margin-top:18px">${useCloud ? 'Данные сохраняются в облаке Телеграма.' : 'Открыто не в Телеграме — данные хранятся только в этом браузере.'}</p>`;
   $('#screen').innerHTML = h;
   $('#edit').onclick = () => startOnboarding(true);
+  bindNormsEditor(); bindThemeEditor();
+  $$('[data-s2f]').forEach(b => b.onclick = () => { S.profile.sportToFood = b.dataset.s2f === '1'; Store.set('profile', S.profile); haptic(); renderProfile(); });
   $('#backup').onclick = async () => {
     const keys = [...await Store.keys('w_'), ...await Store.keys('f_'), 'profile', 'program', 'weights', 'meas', 'recent', 'ach'];
     const txt = 'trener-backup ' + JSON.stringify(await Store.getMany(keys));
