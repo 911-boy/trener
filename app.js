@@ -213,7 +213,9 @@ const plannedFor = d => S.program.workouts.filter(w => w.weekday === d.getDay() 
 
 /* ---------- история и статистика ---------- */
 const doneVals = (w, id) => ((w.sets || {})[id] || []).filter(v => v != null);
-const isTrained = w => w && Object.values(w.sets || {}).some(a => a.some(v => v != null));
+// Тренировкой считается день, где сделан хоть один подход ОСНОВНОГО упражнения: одна разминка или растяжка — не тренировка (Влад, 13.11).
+const anyDone = w => w && Object.values(w.sets || {}).some(a => a.some(v => v != null));
+const isTrained = w => w && Object.entries(w.sets || {}).some(([id, a]) => id !== 'warmup' && id !== 'stretch' && a.some(v => v != null));
 const trainedDates = () => Object.keys(S.history).filter(d => isTrained(S.history[d])).sort();
 // Насколько тренировка сделана: доля выполненных подходов основных упражнений (без разминки и растяжки), 0…1.
 // Сохраняется в записи дня (pct), чтобы не зависеть от будущих правок плана; у старых записей считаем по плану.
@@ -443,7 +445,7 @@ const setsDone = id => doneVals(S.workout, id).length;
 function renderToday() {
   const d = new Date();
   const planned = plannedFor(d);
-  const started = isTrained(S.workout);
+  const started = anyDone(S.workout);
   if (S.workout.wid && !W(S.workout.wid)) S.workout.wid = null; // тренировку удалили из плана
   let h = `<h1>${WDF[d.getDay()]}, ${d.getDate()}.${pad(d.getMonth() + 1)}</h1>` + dayStrip();
 
@@ -809,10 +811,23 @@ function renderPlan() {
     const k = dateKey(d), rec = S.history[k], trained = isTrained(rec), w = plannedFor(d);
     const past = k < S.today, counted = k >= created;
     const cls = trained ? (isFull(rec) ? 'ok' : 'part') : past && w && counted ? 'miss' : w ? 'plan' : '';
-    h += `<span class="dc ${cls} ${k === S.today ? 'now' : ''} ${past ? 'past' : ''}"${trained && !isFull(rec) ? ` style="--p:${Math.round(completion(rec) * 100)}%"` : ''}><b>${d.getDate()}</b><i></i></span>`;
+    h += `<span class="dc ${cls} ${k === S.today ? 'now' : ''} ${past ? 'past' : ''}"${trained && !isFull(rec) ? ` style="--p:${Math.max(20, Math.round(completion(rec) * 100))}%"` : ''}><b>${d.getDate()}</b><i></i></span>`;
   }
   h += `</div><div class="legend"><span><i class="on"></i>сделано</span><span><i class="half"></i>неполная</span><span><i class="dot"></i>по плану</span></div>`;
   h += `<h3>Тренировки</h3>`;
+  // Как дела с каждой тренировкой на этой неделе — теми же цветами, что в календаре.
+  const wk0 = weekStart();
+  const weekStatus = w => {
+    let k = null;
+    for (let i = 0; i < 7; i++) { const d = new Date(wk0); d.setDate(wk0.getDate() + i); const dk = dateKey(d), r = S.history[dk];
+      if (r && isTrained(r) && r.wid === w.id) { k = dk; break; } }
+    if (!k && w.weekday != null) { const d = new Date(wk0); d.setDate(wk0.getDate() + WEEK.indexOf(w.weekday)); const dk = dateKey(d), r = S.history[dk];
+      if (r && isTrained(r) && (!r.wid || r.wid === w.id)) k = dk;
+      else return dk < S.today && dk >= created ? { c: 'miss', t: 'пропущена на этой неделе' } : dk === S.today ? { c: 'now', t: 'сегодня' } : { c: '', t: '' }; }
+    if (!k) return { c: '', t: '' };
+    const r = S.history[k], pc = Math.round(completion(r) * 100);
+    return isFull(r) ? { c: 'ok', t: `сделана ${fmtDate(k)}` } : { c: 'part', t: `неполная ${fmtDate(k)} · ${pc} %`, p: Math.max(20, pc) };
+  };
   const ws = S.program.workouts.slice().sort((a, b) => (a.weekday == null) - (b.weekday == null) || WEEK.indexOf(a.weekday) - WEEK.indexOf(b.weekday));
   ws.forEach(w => {
     const empty = !MAIN(w.list).length;
@@ -821,7 +836,8 @@ function renderPlan() {
       (S.editPlan ? `<div class="pedit"><label>День <select data-wd="${w.id}">${w.custom ? `<option value="" ${w.weekday == null ? 'selected' : ''}>любой</option>` : ''}${WEEK.map(d => `<option value="${d}" ${d === w.weekday ? 'selected' : ''}>${WD[d]}</option>`).join('')}</select></label>
         <button class="btn ghost sm" data-add="${w.id}">+ Упражнение</button></div>${w.custom ? `<div class="exbtns"><button class="btn ghost sm" data-cedit="${w.id}">В калькулятор</button><button class="btn ghost sm danger" data-cdel="${w.id}">Удалить</button></div>` : ''}`
         : empty ? '' : `<button class="link share" data-share="${w.id}">Поделиться тренировкой</button>`);
-    const title = `<small class="wd">${w.weekday == null ? 'любой' : WD[w.weekday]}</small>${esc(w.name)}${w.custom ? ' <span class="tag">своя</span>' : ''}`;
+    const ws1 = weekStatus(w);
+    const title = `<small class="wd ${ws1.c}"${ws1.p ? ` style="--p:${ws1.p}%"` : ''}>${w.weekday == null ? 'любой' : WD[w.weekday]}</small><span class="wn">${esc(w.name)}${w.custom ? ' <span class="tag">своя</span>' : ''}${ws1.t ? `<em class="wst ${ws1.c}">${ws1.t}</em>` : ''}</span>`;
     // В «Изменить» секции открыты, но если закрыл — остаются закрытыми и после правок (баг 13.11: вторник открывался сам).
     h += sec((S.editPlan ? 'we_' : 'w_') + w.id, title, empty ? 'пусто' : `${MAIN(w.list).length} упр · ~${workoutMin(w.list)} мин`, body, !!S.editPlan);
   });
@@ -1485,7 +1501,7 @@ function heatmap(dates) {
   for (let i = 0; i < 28; i++) {
     const d = new Date(start); d.setDate(start.getDate() + i); const k = dateKey(d);
     const st = set.has(k) ? (isFull(S.history[k]) ? 'on' : 'half') : '';
-    h += `<i class="${st} ${k === S.today ? 'now' : ''} ${k > S.today ? 'fut' : ''}"${st === 'half' ? ` style="--p:${Math.round(completion(S.history[k]) * 100)}%"` : ''}>${d.getDate()}</i>`;
+    h += `<i class="${st} ${k === S.today ? 'now' : ''} ${k > S.today ? 'fut' : ''}"${st === 'half' ? ` style="--p:${Math.max(20, Math.round(completion(S.history[k]) * 100))}%"` : ''}>${d.getDate()}</i>`;
   }
   return h;
 }
