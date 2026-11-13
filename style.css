@@ -504,3 +504,4 @@ details.sec .act .list li:first-child { border-top: 0; }
 .wst.part { color: color-mix(in srgb, var(--part) 75%, var(--text)); }
 .wst.miss { color: var(--warn); }
 .wst.now { color: var(--accent); }
+.pick .pinfo .tag { color: var(--accent); background: var(--soft); border-radius: 6px; padding: 1px 6px; margin-left: 4px; white-space: nowrap; }

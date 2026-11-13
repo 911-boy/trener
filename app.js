@@ -176,7 +176,7 @@ function fits(ex, p) {
 // Чем выше балл, тем лучше упражнение под человека: инвентарь важнее, новичку в зале — тренажёры (безопаснее),
 // облегчённые отжимания — только когда инвентаря нет.
 const scoreEx = (e, p) => e.eq.length * 2 + (e.lvl === levelOf(p) ? 1 : 0) + (e.needPull ? 2 : 0)
-  + (e.maxPush && !availableEq(p).length ? 3 : 0) + (e.eq.includes('gym') && levelOf(p) === 1 ? 3 : 0) - (e.iso ? 3 : 0) - (e.alt ? 2 : 0); // alt — вариации для замены, не основа плана
+  + (e.maxPush && !availableEq(p).length ? 3 : 0) + (e.eq.includes('gym') && levelOf(p) === 1 ? 3 : 0) - (e.iso ? 3 : 0) - (e.alt ? 2 : 0) + (e.rec ? 1 : 0); // alt — вариации для замены, не основа плана; rec — советую
 function candidates(pat, p) {
   return Object.keys(LIB).filter(id => LIB[id].pat === pat && fits(LIB[id], p)).sort((a, b) => scoreEx(LIB[b], p) - scoreEx(LIB[a], p));
 }
@@ -282,6 +282,7 @@ function E(id) {
 const LADDER = [['hang', 'neg', 'bandPullup', 'pullup'], ['pushupKnee', 'pushup', 'pushupFeet'], ['chairDips', 'dips'],
   ['squat', 'bulgarian'], ['crunch', 'lyingRaise', 'legRaise'], ['superman', 'towelPull'], ['tableRow', 'invRow'], ['bridge', 'slRdl'],
   ['lunge', 'bulgarian'], ['plank', 'sidePlank'], ['diamond', 'pushupFeet']];
+LADDER.push(...(window.LADDER_MORE || []));
 function ladderStep(id, dir) {
   for (const l of LADDER) { const i = l.indexOf(id); if (i < 0) continue;
     for (let j = i + dir; j >= 0 && j < l.length; j += dir) if (fits(LIB[l[j]], { ...S.profile, pullups: 99, pushups: dir < 0 ? 0 : 99 }) && LIB[l[j]].eq.every(x => availableEq(S.profile).includes(x))) return l[j]; }
@@ -890,9 +891,9 @@ function openPicker(title, pat, exclude, onPick, prof, onClose) {
   for (const pt of pats) {
     const ids = Object.keys(LIB).filter(id => LIB[id].pat === pt && !exclude.includes(id));
     if (!ids.length) continue;
-    const ok = ids.filter(id => fits(LIB[id], p)), other = ids.filter(id => !fits(LIB[id], p));
+    const ok = ids.filter(id => fits(LIB[id], p)).sort((a, b) => scoreEx(LIB[b], p) - scoreEx(LIB[a], p)), other = ids.filter(id => !fits(LIB[id], p));
     const near = !pat || pt === pat; // в режиме «заменить» сначала видно только похожие; поиск ищет по всем
-    h += `<section class="pgroup" data-near="${near ? 1 : 0}" ${near ? '' : 'hidden'}><h3>${esc(PATTERNS[pt])}</h3>` + ok.map(id => pickRow(id, '', true)).join('') +
+    h += `<section class="pgroup" data-near="${near ? 1 : 0}" ${near ? '' : 'hidden'}><h3>${esc(PATTERNS[pt])}</h3>` + ok.map((id, i) => pickRow(id, '', true, i < 2)).join('') +
       other.map(id => pickRow(id, needs(LIB[id], p), false)).join('') + `</section>`;
   }
   if (pat) h += `<button class="btn ghost sm" id="pall">Показать все упражнения</button>`;
@@ -922,10 +923,10 @@ function openPicker(title, pat, exclude, onPick, prof, onClose) {
   $$('[data-pick]', sh).forEach(b => b.onclick = () => { close(); onPick(b.dataset.pick); notify(); });
   $$('[data-prev]', sh).forEach(b => b.onclick = () => previewEx(b.dataset.prev, id => { close(); onPick(id); notify(); }));
 }
-const pickRow = (id, note, fit) => { const e = LIB[id];
+const pickRow = (id, note, fit, best) => { const e = LIB[id];
   const mach = (window.MACHINES || []).filter(m => m[1].includes(id)).map(m => m[0]).join(' ');
   return `<div class="pick ${fit ? '' : 'nofit'}" data-id="${id}" data-fit="${fit ? 1 : 0}" data-s="${esc(norm(e.name + ' ' + e.mus + ' ' + (PATTERNS[e.pat] || '') + ' ' + e.eq.map(x => EQUIP[x] || '').join(' ') + ' ' + mach + (e.eq.includes('gym') ? ' тренажер' : '')))}">
-    <button class="pinfo" data-prev="${id}"><b>${esc(e.name)}</b><span>${esc(e.mus)}${note ? ' · ' + esc(note) : ''}</span></button>
+    <button class="pinfo" data-prev="${id}"><b>${esc(e.name)}${best ? ' <span class="tag">советую</span>' : ''}</b><span>${esc(e.mus)}${note ? ' · ' + esc(note) : ''}</span></button>
     <button class="peye" data-prev="${id}" aria-label="Посмотреть"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
     <button class="padd" data-pick="${id}" aria-label="Выбрать">+</button></div>`; };
 // Предпросмотр: как выглядит упражнение, шаги и видео — до того, как добавить.
