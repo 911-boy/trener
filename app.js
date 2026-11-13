@@ -9,6 +9,14 @@ if (tg) {
   try { if (tg.isVersionAtLeast('7.7')) tg.disableVerticalSwipes(); } catch (e) {}
 }
 
+// Автообновление: Телеграм держит старую страницу в кэше. Сверяем версию с сайтом и, если вышла новая, перезагружаемся по новому адресу.
+const APP_V = '6.3';
+try {
+  fetch('version.txt?t=' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : '').then(v => {
+    v = (v || '').trim();
+    if (v && v !== APP_V && sessionStorage.getItem('upd') !== v) { sessionStorage.setItem('upd', v); location.replace(location.pathname + '?v=' + v + location.hash); }
+  }).catch(() => {});
+} catch (e) {}
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
