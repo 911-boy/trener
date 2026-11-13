@@ -10,7 +10,7 @@ if (tg) {
 }
 
 // Автообновление: Телеграм держит старую страницу в кэше. Сверяем версию с сайтом и, если вышла новая, перезагружаемся по новому адресу.
-const APP_V = '6.3';
+const APP_V = '6.4';
 try {
   fetch('version.txt?t=' + Date.now(), { cache: 'no-store' }).then(r => r.ok ? r.text() : '').then(v => {
     v = (v || '').trim();
@@ -230,9 +230,11 @@ const trainedDates = () => Object.keys(S.history).filter(d => isTrained(S.histor
 const MAIN = list => list.filter(id => LIB[id] && !['warmup', 'stretch'].includes(id));
 function completion(w) {
   if (!isTrained(w)) return 0;
-  if (w.pct != null && w.date !== S.today) return w.pct;
+  if (w.pct && w.date !== S.today) return w.pct; // 0 не верим: старые записи считали без замен
   const pw = w.wid && S.program && W(w.wid);
-  const list = pw ? MAIN(pw.list) : MAIN(Object.keys(w.sets || {}));
+  // план дня + то, что реально делал (заменил упражнение — оно тоже считается)
+  const doneIds = MAIN(Object.keys(w.sets || {})).filter(id => doneVals(w, id).length);
+  const list = pw ? [...new Set([...MAIN(pw.list), ...doneIds])] : doneIds;
   if (!list.length) return 1;
   return Math.min(1, list.reduce((s, id) => s + Math.min(1, doneVals(w, id).length / setsOf(E(id))), 0) / list.length);
 }
@@ -822,7 +824,7 @@ function renderPlan() {
     const cls = trained ? (isFull(rec) ? 'ok' : 'part') : past && w && counted ? 'miss' : w ? 'plan' : '';
     h += `<span class="dc ${cls} ${k === S.today ? 'now' : ''} ${past ? 'past' : ''}"${trained && !isFull(rec) ? ` style="--p:${Math.max(20, Math.round(completion(rec) * 100))}%"` : ''}><b>${d.getDate()}</b><i></i></span>`;
   }
-  h += `</div><div class="legend"><span><i class="on"></i>сделано</span><span><i class="half"></i>неполная</span><span><i class="dot"></i>по плану</span></div>`;
+  h += `</div><div class="legend"><span><i class="on"></i>сделано</span><span><i class="half"></i>неполная</span><span><i class="dot"></i>по плану</span><span><i class="miss"></i>пропуск</span></div>`;
   h += `<h3>Тренировки</h3>`;
   // Как дела с каждой тренировкой на этой неделе — теми же цветами, что в календаре.
   const wk0 = weekStart();
@@ -832,7 +834,7 @@ function renderPlan() {
       if (r && isTrained(r) && r.wid === w.id) { k = dk; break; } }
     if (!k && w.weekday != null) { const d = new Date(wk0); d.setDate(wk0.getDate() + WEEK.indexOf(w.weekday)); const dk = dateKey(d), r = S.history[dk];
       if (r && isTrained(r) && (!r.wid || r.wid === w.id)) k = dk;
-      else return dk < S.today && dk >= created ? { c: 'miss', t: 'пропущена на этой неделе' } : dk === S.today ? { c: 'now', t: 'сегодня' } : { c: '', t: '' }; }
+      else return dk < S.today && dk >= created ? { c: 'miss', t: 'пропущена' } : dk === S.today ? { c: 'now', t: 'сегодня' } : { c: '', t: '' }; }
     if (!k) return { c: '', t: '' };
     const r = S.history[k], pc = Math.round(completion(r) * 100);
     return isFull(r) ? { c: 'ok', t: `сделана ${fmtDate(k)}` } : { c: 'part', t: `неполная ${fmtDate(k)} · ${pc} %`, p: Math.max(20, pc) };

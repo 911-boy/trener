@@ -505,3 +505,8 @@ details.sec .act .list li:first-child { border-top: 0; }
 .wst.miss { color: var(--warn); }
 .wst.now { color: var(--accent); }
 .pick .pinfo .tag { color: var(--accent); background: var(--soft); border-radius: 6px; padding: 1px 6px; margin-left: 4px; white-space: nowrap; }
+/* v6.4: пропуск виден так же, как в списке тренировок */
+.dc.miss { background: color-mix(in srgb, var(--warn) 9%, var(--card)); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--warn) 55%, transparent); color: var(--warn); }
+.dc.miss i { display: none; }
+.legend { flex-wrap: wrap; gap: 6px 14px; }
+.legend i.miss { background: color-mix(in srgb, var(--warn) 9%, var(--card)); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--warn) 55%, transparent); }
