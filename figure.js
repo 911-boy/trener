@@ -68,10 +68,11 @@
     hammer: 'curl', curl: 'curl', bbCurl: 'curl', bandCurl: 'curl', chairDips: 'chairdips', dbExt: 'ext', pushdown: 'pushdown',
     lateral: 'lateral', bandLateral: 'lateral', hang: 'hang', wrist: 'wrist', wristExt: 'wrist', farmer: 'farmer', towelWring: 'wring',
     warmup: 'warmup', stretch: 'stretch',
-    gravitron: 'pullup', machineChest: 'seatpress', inclineDb: 'bench', cableFly: 'lateral', machineShoulder: 'press',
+    gravitron: 'pullup', machineChest: 'seatpress', inclineDb: 'bench', cableFly: 'fly', machineShoulder: 'press',
     legExt: 'legext', legCurl: 'legcurl', cableCurl: 'curl',
   };
   Object.assign(A, {
+    fly: { a: P({ front: 1, ua: 80, fa: 70, th: 5, sh: 5 }), b: P({ front: 1, ua: 35, fa: 15, th: 5, sh: 5 }), fix: ['A', 60, 92] },
     seatpress: { a: P({ t: -8, ua: 10, fa: 100, th: 90 }), b: P({ t: -8, ua: 90, fa: 90, th: 90 }), fix: ['H', 48, 66], props: ['chairSeat', 'handle'] },
     legext: { a: P({ t: -5, ua: 10, fa: 30, th: 90, sh: 0 }), b: P({ t: -5, ua: 10, fa: 30, th: 90, sh: 85 }), fix: ['H', 48, 62], props: ['chairSeat'] },
     legcurl: { a: P({ t: 90, ua: 95, fa: 95, th: -90, sh: -90 }), b: P({ t: 90, ua: 95, fa: 95, th: -90, sh: -175 }), fix: ['H', 55, 70], props: ['bench'] },
@@ -149,11 +150,11 @@
 
   let raf = 0;
   window.Figure = {
-    has: id => !!MAP[id],
+    has: id => !!(MAP[id] || (window.LIB && LIB[id] && LIB[id].fig)),
     // Вставляет человечка в el и запускает анимацию (одна активная на экране).
     mount(el, exId, gear) {
       cancelAnimationFrame(raf);
-      const anim = A[MAP[exId]]; if (!anim || !el) { if (el) el.innerHTML = ''; return; }
+      const anim = A[MAP[exId] || (window.LIB && LIB[exId] && LIB[exId].fig)]; if (!anim || !el) { if (el) el.innerHTML = ''; return; }
       el.innerHTML = `<svg viewBox="0 0 120 100" class="fig" aria-hidden="true">
         <path class="props" d="${staticProps(anim)}"/>
         <path id="far" class="limb far"/><path id="near" class="limb"/><path id="gear" class="gear"/>
@@ -170,6 +171,6 @@
       if (!window.matchMedia || !matchMedia('(prefers-reduced-motion: reduce)').matches) raf = requestAnimationFrame(tick);
     },
     stop() { cancelAnimationFrame(raf); },
-    _draw(svg, exId, k, gear) { if (svg && A[MAP[exId]]) draw(svg, A[MAP[exId]], k, gear); }, // для проверки кадров
+    _draw(svg, exId, k, gear) { const a = A[MAP[exId] || (LIB[exId] && LIB[exId].fig)]; if (svg && a) draw(svg, a, k, gear); }, // для проверки кадров
   };
 })();

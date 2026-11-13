@@ -470,3 +470,22 @@ details.sec .act .list li:first-child { border-top: 0; }
 .exrow .num { flex-basis: 30px; height: 30px; font-size: 14px; }
 .exrow b { font-size: 16px; }
 .exlist { gap: 6px; }
+
+/* v6 (13.11): подходы, поделиться, тренажёры, история еды */
+.nsets { display: inline-flex; align-items: center; gap: 6px; margin-left: 4px; }
+.nsets button { width: 34px; height: 34px; border: 0; border-radius: 10px; background: var(--card2); color: var(--text); font-size: 19px; font-weight: 700; line-height: 1; }
+.lg-done { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.lg-done .link { font-size: 16px; padding: 6px 0; }
+.prow .mini.sets { width: auto; min-width: 34px; padding: 0 6px; color: var(--accent); }
+.link.share { display: block; margin: 6px 0 2px; font-size: 15px; }
+.chiprow.mach { flex-wrap: nowrap; overflow-x: auto; margin: 10px -16px 4px; padding: 0 16px; scrollbar-width: none; }
+.chiprow.mach::-webkit-scrollbar { display: none; }
+.chiprow.mach button { flex: 0 0 auto; }
+.chiprow.mach button.on, .chiprow button.fav { background: var(--soft); color: var(--accent); }
+.chiprow button.fav::before { content: '★ '; }
+.list.mf li { gap: 6px; }
+.list.mf li small { font-size: 13px; }
+.list li > button.star { font-size: 24px; width: 44px; height: 44px; color: var(--hint); }
+.list li > button.star.on { color: #e8ad3e; }
+.list li > button.padd { background: var(--accent); color: var(--accent-text); font-size: 26px; padding: 0; width: 44px; height: 44px; border-radius: 12px; flex: 0 0 44px; }
+#imtext { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; padding: 12px; border-radius: 14px; border: 1px solid var(--line); background: var(--card2); color: var(--text); margin-top: 8px; }

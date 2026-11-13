@@ -238,13 +238,13 @@ window.SPLITS = {
   2: [ { name: 'Всё тело 1', focus: 'спина, ноги, грудь', slots: ['pull_v', 'squat', 'push_h', 'pull_h', 'core', 'biceps', 'delts', 'calves'] },
        { name: 'Всё тело 2', focus: 'спина, задняя поверхность, плечи', slots: ['pull_h', 'hinge', 'push_v', 'lunge', 'core', 'triceps', 'grip', 'glute'] } ],
   3: [ { name: 'Всё тело 1', focus: 'спина, ноги, грудь', slots: ['pull_v', 'squat', 'push_h', 'pull_h', 'core', 'biceps', 'calves', 'glute'] },
-       { name: 'Всё тело 2', focus: 'плечи, грудь, ноги', slots: ['push_v', 'pull_h', 'lunge', 'push_h', 'core', 'triceps', 'delts', 'glute'] },
+       { name: 'Всё тело 2', focus: 'плечи, грудь, ноги', slots: ['push_v', 'pull_h', 'lunge', 'push_h', 'rear', 'core', 'triceps', 'delts', 'glute'] },
        { name: 'Всё тело 3', focus: 'спина, задняя поверхность', slots: ['pull_v', 'hinge', 'push_h', 'pull_h', 'core', 'biceps', 'grip', 'calves'] } ],
-  4: [ { name: 'Верх 1', focus: 'грудь, спина, плечи', slots: ['push_h', 'pull_v', 'push_v', 'pull_h', 'biceps', 'triceps', 'delts', 'core'] },
+  4: [ { name: 'Верх 1', focus: 'грудь, спина, плечи', slots: ['push_h', 'pull_v', 'push_v', 'pull_h', 'rear', 'biceps', 'triceps', 'delts', 'core'] },
        { name: 'Низ 1', focus: 'ноги, ягодицы, пресс', slots: ['squat', 'hinge', 'lunge', 'glute', 'calves', 'core'] },
        { name: 'Верх 2', focus: 'спина, грудь, руки', slots: ['pull_h', 'push_h', 'pull_v', 'delts', 'triceps', 'biceps', 'grip', 'core'] },
        { name: 'Низ 2', focus: 'задняя поверхность, ноги', slots: ['hinge', 'squat', 'lunge', 'glute', 'calves', 'core'] } ],
-  5: [ { name: 'Тяга', focus: 'спина, бицепс', slots: ['pull_v', 'pull_h', 'pull_h', 'biceps', 'grip', 'core'] },
+  5: [ { name: 'Тяга', focus: 'спина, бицепс', slots: ['pull_v', 'pull_h', 'pull_h', 'rear', 'biceps', 'grip', 'core'] },
        { name: 'Жим', focus: 'грудь, плечи, трицепс', slots: ['push_h', 'push_v', 'push_h', 'delts', 'triceps', 'core'] },
        { name: 'Ноги', focus: 'ноги, ягодицы', slots: ['squat', 'hinge', 'lunge', 'glute', 'calves', 'core'] },
        { name: 'Верх', focus: 'спина, грудь, руки', slots: ['pull_v', 'push_h', 'pull_h', 'push_v', 'biceps', 'triceps'] },
@@ -257,6 +257,6 @@ SPLITS[7] = SPLITS[6].concat([{ name: 'Лёгкая', focus: 'пресс, хва
 // Приоритет мышц → какой тип движения добавить.
 window.PRIORITY = {
   back: { name: 'Спина', pat: 'pull_h' }, arms: { name: 'Руки', pat: 'biceps' }, forearms: { name: 'Предплечья', pat: 'grip' },
-  chest: { name: 'Грудь', pat: 'push_h' }, shoulders: { name: 'Плечи', pat: 'delts' }, legs: { name: 'Ноги', pat: 'lunge' }, abs: { name: 'Пресс', pat: 'core' },
+  chest: { name: 'Грудь', pat: 'push_h' }, shoulders: { name: 'Плечи', pat: 'delts' }, rear: { name: 'Задняя дельта', pat: 'rear' }, legs: { name: 'Ноги', pat: 'lunge' }, abs: { name: 'Пресс', pat: 'core' },
 };
 window.LIMITS = { knees: 'Колени', back: 'Спина / поясница', shoulders: 'Плечи' };
